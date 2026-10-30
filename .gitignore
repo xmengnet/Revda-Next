@@ -48,6 +48,9 @@ CMakeLists.txt.user*
 # User
 build/
 web-ext-artifacts/
+revda
+revda-bin
+.mygo/
 
 # will have compiled files and executables
 target/
