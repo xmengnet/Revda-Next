@@ -38,7 +38,7 @@ type App struct {
 	refreshing   bool
 
 	// Filters
-	platformFilter int    // 0: 全部, 1: B站, 2: 斗鱼, 3: 虎牙, 4: YouTube, 5: Twitch
+	platformFilter int    // 0: 全部, 1: B站, 2: 斗鱼, 3: 虎牙, 4: YouTube, 5: Twitch, 6: 抖音
 	onlyLiving     bool   // 仅看开播
 	searchFilter   string // 过滤主播或标题
 
@@ -518,6 +518,10 @@ func (a *App) filterRooms(rooms []string) []string {
 				if !strings.HasPrefix(code, "tw-") {
 					continue
 				}
+			case 6: // Douyin
+				if !strings.HasPrefix(code, "dy-") {
+					continue
+				}
 			}
 		}
 
@@ -579,7 +583,7 @@ func (a *App) View(c *ui.Context) {
 
 			// Search / Input box
 			inputEl := ui.TextInput(c.Key("input_box"), &a.inputRoom).
-				Placeholder("输入直播间代码或网址 (如 bi-545342, do-475252, hu-660118, BV...)...").
+				Placeholder("输入直播间代码或网址 (如 bi-545342, do-475252, hu-660118, dy-271387799639, BV...)...").
 				Grow(1)
 
 			if inputEl.Submitted() {
@@ -623,7 +627,7 @@ func (a *App) View(c *ui.Context) {
 			ui.Spacer(c)
 
 			// Platform chips
-			platforms := []string{"全部", "B站", "斗鱼", "虎牙", "YouTube", "Twitch"}
+			platforms := []string{"全部", "B站", "斗鱼", "虎牙", "YouTube", "Twitch", "抖音"}
 			ui.Row(c).Gap(4).Children(func() {
 				for idx, name := range platforms {
 					btn := ui.Button(c.Key(fmt.Sprintf("plat_%d", idx)), name)

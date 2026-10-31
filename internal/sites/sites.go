@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"revda/internal/engine/streamfinder"
 )
 
 type RoomInfo struct {
@@ -77,6 +79,10 @@ func NormalizeInput(input string) (roomCode string, playURL string, err error) {
 		rid := strings.TrimPrefix(input, "tw-")
 		return input, "https://www.twitch.tv/" + rid, nil
 	}
+	if strings.HasPrefix(input, "dy-") {
+		rid := strings.TrimPrefix(input, "dy-")
+		return input, "https://live.douyin.com/" + rid, nil
+	}
 	if strings.HasPrefix(input, "BV") || strings.HasPrefix(input, "av") {
 		parts := strings.Split(input, ":")
 		if len(parts) == 2 {
@@ -115,6 +121,14 @@ func NormalizeInput(input string) (roomCode string, playURL string, err error) {
 		re := regexp.MustCompile(`twitch\.tv/([a-zA-Z0-9_]+)`)
 		if m := re.FindStringSubmatch(input); len(m) > 1 {
 			return "tw-" + m[1], "https://www.twitch.tv/" + m[1], nil
+		}
+	}
+	// live.douyin.com/{web_rid}; v.douyin.com short links need a redirect
+	// follow, which NormalizeInput deliberately does not do.
+	if strings.Contains(input, "live.douyin.com/") {
+		re := regexp.MustCompile(`live\.douyin\.com/(\d+)`)
+		if m := re.FindStringSubmatch(input); len(m) > 1 {
+			return "dy-" + m[1], "https://live.douyin.com/" + m[1], nil
 		}
 	}
 	if strings.Contains(input, "youtube.com/watch") {
@@ -205,6 +219,15 @@ func (s *Service) GetRoomInfo(ctx context.Context, roomCode string) (*RoomInfo, 
 			return nil, ctx.Err()
 		}
 		return s.getTwitchRoomInfo(ctx, strings.TrimPrefix(roomCode, "tw-"))
+	}
+	if strings.HasPrefix(roomCode, "dy-") {
+		select {
+		case s.semChina <- struct{}{}:
+			defer func() { <-s.semChina }()
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		return s.getDouyinRoomInfo(ctx, strings.TrimPrefix(roomCode, "dy-"))
 	}
 	if strings.HasPrefix(roomCode, "BV") || strings.HasPrefix(roomCode, "av") {
 		select {
@@ -673,6 +696,22 @@ func (s *Service) getBangumiInfo(ctx context.Context, code string) (*RoomInfo, e
 		Title:    fmt.Sprintf("%s · P%d", title, idx+1),
 		Owner:    "番剧",
 		IsLiving: false,
+	}, nil
+}
+
+// getDouyinRoomInfo delegates to the streamfinder package: the enter API needs
+// the a_bogus signature, which lives there (and is embedded once).
+func (s *Service) getDouyinRoomInfo(ctx context.Context, rid string) (*RoomInfo, error) {
+	meta, err := streamfinder.NewDouyinFinder().RoomMeta(ctx, rid)
+	if err != nil {
+		return nil, err
+	}
+	return &RoomInfo{
+		RoomCode: "dy-" + rid,
+		Cover:    meta.Cover,
+		Title:    meta.Title,
+		Owner:    meta.Owner,
+		IsLiving: meta.IsLiving,
 	}, nil
 }
 

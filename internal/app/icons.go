@@ -31,6 +31,11 @@ var iconDouyuPNG []byte
 //go:embed assets/huya-icon.png
 var iconHuyaPNG []byte
 
+// douyin is the favicon its site ships (the black-badge music note).
+//
+//go:embed assets/douyin-icon.png
+var iconDouyinPNG []byte
+
 var (
 	iconBilibili = ui.MustParseSVG(iconBilibiliSVG)
 	iconYoutube  = ui.MustParseSVG(iconYoutubeSVG)
@@ -67,14 +72,17 @@ func platformIcon(code string) *platformIconSource {
 		return &platformIconSource{svg: iconYoutube}
 	case hasAnyPrefix(code, "tw-"):
 		return &platformIconSource{svg: iconTwitch}
+	case hasAnyPrefix(code, "dy-"):
+		return &platformIconSource{bitmap: douyinBitmap}
 	default:
 		return nil
 	}
 }
 
 var (
-	douyuBitmap = loadPlatformIconBitmap(iconDouyuPNG)
-	huyaBitmap  = loadPlatformIconBitmap(iconHuyaPNG)
+	douyuBitmap  = loadPlatformIconBitmap(iconDouyuPNG)
+	huyaBitmap   = loadPlatformIconBitmap(iconHuyaPNG)
+	douyinBitmap = loadPlatformIconBitmap(iconDouyinPNG)
 )
 
 func hasAnyPrefix(s string, prefixes ...string) bool {

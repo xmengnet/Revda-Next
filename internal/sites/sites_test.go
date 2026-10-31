@@ -2,6 +2,7 @@ package sites
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 )
@@ -18,6 +19,8 @@ func TestNormalizeInput(t *testing.T) {
 		{"yt-ch123", "yt-ch123", "https://www.youtube.com/@ch123"},
 		{"ytv-v123", "ytv-v123", "https://www.youtube.com/watch?v=v123"},
 		{"tw-ninja", "tw-ninja", "https://www.twitch.tv/ninja"},
+		{"dy-271387799639", "dy-271387799639", "https://live.douyin.com/271387799639"},
+		{"https://live.douyin.com/271387799639", "dy-271387799639", "https://live.douyin.com/271387799639"},
 		{"BV1xx411c7mD", "BV1xx411c7mD", "https://www.bilibili.com/video/BV1xx411c7mD"},
 		{"https://live.bilibili.com/545342", "bi-545342", "https://live.bilibili.com/545342"},
 		{"https://www.douyu.com/475252", "do-475252", "https://www.douyu.com/475252"},
@@ -67,5 +70,32 @@ func TestFetchLiveRooms(t *testing.T) {
 			t.Errorf("unexpected room code: %v", info2.RoomCode)
 		}
 		t.Logf("Douyu room fetched: %+v", info2)
+	}
+}
+
+// TestDouyinRoomInfoLive exercises the room-list metadata path, which reuses
+// the streamfinder enter API. Set DOUYIN_ROOM to a live web rid.
+func TestDouyinRoomInfoLive(t *testing.T) {
+	if testing.Short() {
+		t.Skip("network test")
+	}
+	room := os.Getenv("DOUYIN_ROOM")
+	if room == "" {
+		t.Skip("set DOUYIN_ROOM to a douyin web rid")
+	}
+	s := NewService()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	info, err := s.GetRoomInfo(ctx, "dy-"+room)
+	if err != nil {
+		t.Fatalf("GetRoomInfo: %v", err)
+	}
+	t.Logf("code=%s title=%q owner=%q living=%v cover=%s", info.RoomCode, info.Title, info.Owner, info.IsLiving, info.Cover)
+	if info.RoomCode != "dy-"+room {
+		t.Fatalf("room code = %q", info.RoomCode)
+	}
+	if info.Title == "" || info.Owner == "" {
+		t.Fatalf("empty title/owner: %+v", info)
 	}
 }

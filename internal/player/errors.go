@@ -191,6 +191,8 @@ func platformOf(roomCode string) string {
 		return "YouTube"
 	case strings.HasPrefix(roomCode, "tw-"):
 		return "Twitch"
+	case strings.HasPrefix(roomCode, "dy-"):
+		return "抖音"
 	default:
 		return ""
 	}

@@ -79,6 +79,10 @@ func launchDirect(roomCode string, cfg config.DmliveConfig, record bool, extraAr
 	case strings.HasPrefix(roomCode, "tw-"):
 		finder = streamfinder.NewTwitchFinder()
 		targetURL = "https://www.twitch.tv/" + strings.TrimPrefix(roomCode, "tw-")
+	case strings.HasPrefix(roomCode, "dy-"):
+		finder = streamfinder.NewDouyinFinder()
+		targetURL = "https://live.douyin.com/" + strings.TrimPrefix(roomCode, "dy-")
+		dmRoomID = strings.TrimPrefix(roomCode, "dy-")
 	case strings.HasPrefix(roomCode, "BV"), strings.HasPrefix(roomCode, "av"):
 		// Regular bilibili videos: DASH via WBI-signed playurl, danmaku from
 		// the static per-video XML (cid comes back in StreamInfo.DanmakuID).
@@ -200,6 +204,8 @@ func startDanmaku(ctx context.Context, roomCode, roomID string, cfg config.Dmliv
 		client = danmaku.NewBilibiliDanmakuClient(roomID)
 	case strings.HasPrefix(roomCode, "do-"):
 		client = danmaku.NewDouyuDanmakuClient(roomID)
+	case strings.HasPrefix(roomCode, "dy-"):
+		client = danmaku.NewDouyinDanmakuClient(roomID)
 	default: // hu-
 		client = danmaku.NewHuyaDanmakuClient(roomID)
 	}
@@ -532,6 +538,7 @@ func CanResolveDirectly(roomCode string) bool {
 		strings.HasPrefix(roomCode, "yt-") ||
 		strings.HasPrefix(roomCode, "ytv-") ||
 		strings.HasPrefix(roomCode, "tw-") ||
+		strings.HasPrefix(roomCode, "dy-") ||
 		strings.HasPrefix(roomCode, "BV") ||
 		strings.HasPrefix(roomCode, "av") ||
 		strings.HasPrefix(roomCode, "ep") ||
