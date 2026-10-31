@@ -70,7 +70,7 @@ func launchDirect(roomCode string, cfg config.DmliveConfig, record bool, extraAr
 		targetURL = "https://www.huya.com/" + strings.TrimPrefix(roomCode, "hu-")
 		dmRoomID = strings.TrimPrefix(roomCode, "hu-")
 	case strings.HasPrefix(roomCode, "yt-"):
-		// YouTube/Twitch playback has no danmaku client in the Go engine yet.
+		// YouTube live playback has no danmaku client in the Go engine yet.
 		finder = streamfinder.NewYoutubeFinder()
 		targetURL = "https://www.youtube.com/@" + strings.TrimPrefix(roomCode, "yt-") + "/live"
 	case strings.HasPrefix(roomCode, "ytv-"):
@@ -79,6 +79,7 @@ func launchDirect(roomCode string, cfg config.DmliveConfig, record bool, extraAr
 	case strings.HasPrefix(roomCode, "tw-"):
 		finder = streamfinder.NewTwitchFinder()
 		targetURL = "https://www.twitch.tv/" + strings.TrimPrefix(roomCode, "tw-")
+		dmRoomID = strings.TrimPrefix(roomCode, "tw-")
 	case strings.HasPrefix(roomCode, "dy-"):
 		finder = streamfinder.NewDouyinFinder()
 		targetURL = "https://live.douyin.com/" + strings.TrimPrefix(roomCode, "dy-")
@@ -204,6 +205,8 @@ func startDanmaku(ctx context.Context, roomCode, roomID string, cfg config.Dmliv
 		client = danmaku.NewBilibiliDanmakuClient(roomID)
 	case strings.HasPrefix(roomCode, "do-"):
 		client = danmaku.NewDouyuDanmakuClient(roomID)
+	case strings.HasPrefix(roomCode, "tw-"):
+		client = danmaku.NewTwitchDanmakuClient(roomID)
 	case strings.HasPrefix(roomCode, "dy-"):
 		client = danmaku.NewDouyinDanmakuClient(roomID)
 	default: // hu-

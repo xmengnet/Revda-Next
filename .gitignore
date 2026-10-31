@@ -51,6 +51,8 @@ web-ext-artifacts/
 revda
 revda-bin
 .mygo/
+.zcode
+.spec-workflow/
 
 # will have compiled files and executables
 target/
