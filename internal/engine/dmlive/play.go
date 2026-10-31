@@ -25,14 +25,18 @@ type danmakuClient interface {
 
 // spawnMpv launches mpv with the per-site argument set Rust dmlive uses:
 // DASH-direct sites get UA/Referer headers, live sites get caching.
-func spawnMpv(ctx context.Context, site Site) (*mpvctl.Mpv, error) {
+func spawnMpv(ctx context.Context, site Site, extra []string) (*mpvctl.Mpv, error) {
+	var args []string
 	if site == SiteBiliVideo {
-		return mpvctl.Spawn(ctx, []string{
-			"--user-agent=" + streamer.GenUA,
+		args = append(args,
+			"--user-agent="+streamer.GenUA,
 			"--http-header-fields-add=Referer: https://www.bilibili.com/",
-		})
+		)
+	} else {
+		args = append(args, "--cache=yes", "--cache-pause-initial=yes")
 	}
-	return mpvctl.Spawn(ctx, []string{"--cache=yes", "--cache-pause-initial=yes"})
+	args = append(args, extra...)
+	return mpvctl.Spawn(ctx, args)
 }
 
 // mpvMonitor closes mpvDone when mpv exits on its own (user closed the
@@ -64,16 +68,9 @@ func (r *Runtime) notifyStarted() {
 	}
 }
 
-// armRecordPath fixes the stream-record target (named after the resolved
-// title like every dmlive recording) on the first call and returns it;
-// subsequent calls return "" — mpv keeps the property across reconnects and
-// re-setting it could reopen the file.
-func (r *Runtime) armRecordPath(title string) string {
-	r.recordMu.Lock()
-	defer r.recordMu.Unlock()
-	if r.recordPath != "" {
-		return "" // already armed
-	}
+// ensureRecordDir resolves and creates the recording directory (config
+// record_path or ~/Videos/revda).
+func (r *Runtime) ensureRecordDir() string {
 	dir := r.recordDir
 	if dir == "" {
 		home, err := os.UserHomeDir()
@@ -87,15 +84,41 @@ func (r *Runtime) armRecordPath(title string) string {
 		logErrorf("record dir: %v", err)
 		return ""
 	}
+	return dir
+}
+
+// recordPathOnce fixes the stream-record target (video sessions) on the
+// first call and returns it; subsequent calls return "" — mpv keeps the
+// property across page loads and re-setting it could reopen the file.
+func (r *Runtime) recordPathOnce(title string) string {
+	r.recordMu.Lock()
+	defer r.recordMu.Unlock()
+	if r.recordPath != "" {
+		return "" // already armed
+	}
+	dir := r.ensureRecordDir()
+	if dir == "" {
+		return ""
+	}
 	r.recordPath = filepath.Join(dir, recordFilename(title, "mkv"))
 	return r.recordPath
+}
+
+// recordPathFresh returns a new timestamped recording path for one relay
+// session — reconnect rounds record into separate files.
+func (r *Runtime) recordPathFresh(title string) string {
+	dir := r.ensureRecordDir()
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, recordFilename(title, "mkv"))
 }
 
 // playLive is the live-site play mode: resolve → relay through ffmpeg → mpv
 // plays the muxed matroska flow. When the source ends the loop reconnects
 // after 1s, until resolve fails or mpv closes.
 func (r *Runtime) playLive(ctx context.Context) error {
-	mpv, err := spawnMpv(ctx, r.site)
+	mpv, err := spawnMpv(ctx, r.site, r.opts.MpvExtraArgs)
 	if err != nil {
 		return err
 	}
@@ -113,6 +136,11 @@ func (r *Runtime) playLive(ctx context.Context) error {
 		case <-playCtx.Done():
 		}
 	}()
+
+	// The tee owns the relay's single consumer slot and feeds both mpv and
+	// (when recording) a recorder ffmpeg the identical matroska stream.
+	go r.tee.Run(playCtx)
+	go r.tee.Serve(playCtx, r.teeLn)
 
 	for {
 		if err := r.liveIteration(playCtx, false); err != nil {
@@ -188,6 +216,8 @@ func (r *Runtime) liveIteration(ctx context.Context, record bool) error {
 	}
 	ff.OnOutputReady = func() {
 		if record {
+			// Record-only (CLI -r): the recorder takes the relay's consumer
+			// slot directly; no mpv, no tee.
 			if r.opts.HTTPAddress == "" {
 				cmd, rerr := ffmpegctl.RecordTask(r.f2mURL, info.Title, recordFilename(info.Title, "mkv"))
 				if rerr != nil {
@@ -198,16 +228,23 @@ func (r *Runtime) liveIteration(ctx context.Context, record bool) error {
 			}
 			return
 		}
-		if r.mpv != nil {
-			// Recording arms before the loadfile so the file captures the
-			// stream from its first byte; the danmaku subtitle tracks are
-			// already muxed into the relayed matroska.
-			if r.opts.RecordWhilePlaying {
-				if path := r.armRecordPath(info.Title); path != "" {
-					_ = r.mpv.Command("set_property", "stream-record", path)
+		// Play&record goes through the tee: mpv plays one branch, a recorder
+		// ffmpeg copies the other — mpv's stream-record drops packets on
+		// live streams, ffmpeg over the tee loses nothing. Each relay round
+		// records into a fresh file; the previous recorder finalizes when
+		// the tee cuts it off on relay restart.
+		if r.opts.RecordWhilePlaying {
+			if path := r.recordPathFresh(info.Title); path != "" {
+				cmd, rerr := ffmpegctl.RecordTask(r.teeURL, info.Title, path)
+				if rerr != nil {
+					logErrorf("record task: %v", rerr)
+				} else {
+					go func() { _ = cmd.Wait() }()
 				}
 			}
-			_ = r.mpv.LoadFile(r.f2mURL, "")
+		}
+		if r.mpv != nil {
+			_ = r.mpv.LoadFile(r.teeURL, "")
 			_ = r.mpv.Command("set_property", "sub-visibility", true)
 		}
 	}
@@ -305,7 +342,7 @@ func (r *Runtime) runStreamer(ctx context.Context, info *streamfinder.StreamInfo
 // playVideo plays bilibili videos/bangumi: mpv takes the DASH EDL directly
 // and pages advance on end-file / keybinds.
 func (r *Runtime) playVideo(ctx context.Context) error {
-	mpv, err := spawnMpv(ctx, r.site)
+	mpv, err := spawnMpv(ctx, r.site, r.opts.MpvExtraArgs)
 	if err != nil {
 		return err
 	}
@@ -355,7 +392,7 @@ func (r *Runtime) loadVideoPage(ctx context.Context, page int) {
 	if r.opts.RecordWhilePlaying {
 		// The static danmaku track lives outside the EDL; it is muxed into
 		// the recording after mpv exits (muxVideoDanmaku).
-		if path := r.armRecordPath(info.Title); path != "" {
+		if path := r.recordPathOnce(info.Title); path != "" {
 			_ = r.mpv.Command("set_property", "stream-record", path)
 		}
 	}

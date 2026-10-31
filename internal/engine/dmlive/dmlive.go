@@ -44,6 +44,12 @@ type Options struct {
 	// OnStarted fires once when mpv has been spawned in a play mode, giving
 	// GUI callers an "it's up" signal long before Run returns.
 	OnStarted func()
+	// MpvExtraArgs appends arguments to every mpv spawn (headless test
+	// runs, site-specific workarounds).
+	MpvExtraArgs []string
+	// RecordPath overrides the recording directory (config record_path or
+	// ~/Videos/revda when empty).
+	RecordPath string
 }
 
 type Site int
@@ -116,6 +122,12 @@ type Runtime struct {
 	videoURL   string
 	f2mURL     string
 
+	// tee splits the relay's single-consumer f2m flow between mpv (play)
+	// and a recorder ffmpeg (play&record) without either side knowing.
+	teeLn  net.Listener
+	teeURL string
+	tee    *streamTee
+
 	mpv     *mpvctl.Mpv
 	mpvDone chan struct{}
 
@@ -164,6 +176,9 @@ func Run(ctx context.Context, opts Options) error {
 		mpvDone:   make(chan struct{}),
 		recordDir: cfg.RecordPath,
 	}
+	if opts.RecordPath != "" {
+		r.recordDir = opts.RecordPath
+	}
 	if r.danmakuLn, r.videoLn, r.f2mURL, err = newRelaySockets(); err != nil {
 		return err
 	}
@@ -171,6 +186,12 @@ func Run(ctx context.Context, opts Options) error {
 	defer r.videoLn.Close()
 	r.danmakuURL = "tcp://" + r.danmakuLn.Addr().String()
 	r.videoURL = "tcp://" + r.videoLn.Addr().String()
+	if r.teeLn, err = net.Listen("tcp", "127.0.0.1:0"); err != nil {
+		return err
+	}
+	defer r.teeLn.Close()
+	r.teeURL = "tcp://" + r.teeLn.Addr().String()
+	r.tee = newStreamTee(r.f2mURL)
 
 	logInfof("site %d url %s", site, opts.URL)
 
