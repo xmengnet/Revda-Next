@@ -4,7 +4,7 @@ go 1.27.3
 
 require (
 	github.com/dop251/goja v0.0.0-20261028213108-85be1416108e
-	github.com/egoist/mygo v0.7.4-0.20261030064541-2b66322aa335
+	github.com/egoist/mygo v0.7.3
 	github.com/pelletier/go-toml/v2 v2.4.3
 	golang.org/x/net v0.59.0
 )
