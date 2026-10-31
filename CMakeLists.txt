@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.6)
 # SET(CMAKE_INSTALL_PREFIX /usr CACHE PATH "Set install prefix.")
 project(revda)
-set(PROJECT_VERSION "5.7.0")
+set(PROJECT_VERSION "5.8.0")
 
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
@@ -34,13 +34,13 @@ include(FeatureSummary)
 
 file(GLOB_RECURSE REVDA_GO_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/*.go")
 
-set(REVDA_BIN "${CMAKE_CURRENT_BINARY_DIR}/revda")
+set(REVDA_BIN "${CMAKE_CURRENT_BINARY_DIR}/revda-next")
 add_custom_command(
     OUTPUT "${REVDA_BIN}"
     COMMAND ${GO_EXECUTABLE} build -trimpath -ldflags "-s -w" -o "${REVDA_BIN}" "${CMAKE_CURRENT_SOURCE_DIR}/main.go"
     DEPENDS ${REVDA_GO_SOURCES}
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-    COMMENT "Building revda (Go)"
+    COMMENT "Building revda-next (Go)"
 )
 add_custom_target(revda-bin ALL DEPENDS "${REVDA_BIN}")
 
@@ -63,11 +63,11 @@ endif()
 if (NOT NODMLIVE)
     install(PROGRAMS "${DMLIVE_BIN}" DESTINATION bin)
 endif()
-install(PROGRAMS "${REVDA_BIN}" DESTINATION bin)
+install(PROGRAMS "${REVDA_BIN}" DESTINATION bin RENAME revda-next)
 
-install(FILES "icon/revda.svg"
-    DESTINATION "share/icons/hicolor/scalable/apps")
-install(FILES "misc/revda.desktop"
+install(FILES "icon/revda-next.svg"
+    DESTINATION "share/icons/hicolor/scalable/apps" RENAME revda-next.svg)
+install(FILES "misc/revda-next.desktop"
     DESTINATION "share/applications")
 install(FILES "misc/dmlive-mime.desktop"
     DESTINATION "share/applications")

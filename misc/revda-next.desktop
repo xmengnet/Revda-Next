@@ -1,11 +1,11 @@
 [Desktop Entry]
 
 Type=Application
-Name=Revda
+Name=Revda-Next
 Comment=Play streaming and video with danmaku
 Comment[zh_CN]=播放弹幕直播与视频
 Categories=AudioVideo;Audio;Video;Player;TV;
-Exec=revda
-Icon=revda
+Exec=revda-next
+Icon=revda-next
 StartupNotify=true
 Terminal=false
