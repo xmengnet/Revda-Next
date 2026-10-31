@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 type RunMode int
@@ -44,6 +45,13 @@ type Options struct {
 
 	DashInputs []DashInput
 
+	// SourceURL, when set, makes the relay pull the FLV source directly
+	// (with SourceHeaders applied) instead of reading the streamer's video
+	// socket: some FLV CDNs (douyu edgesrv) reject Go's TLS fingerprint,
+	// while ffmpeg's own TLS is accepted.
+	SourceURL     string
+	SourceHeaders map[string]string
+
 	VideoURL   string // tcp://... source for FLV/HLS1, pre-ff source for HLS0
 	DanmakuURL string // tcp://... danmaku subtitle stream
 	Output     string // listen target: tcp://f2m or the --http-address value
@@ -67,6 +75,27 @@ var (
 	dmRe  = regexp.MustCompile(`Stream #[0-9:]+\s*Subtitle:\s*ass`)
 )
 
+// inputArgs prefixes a direct URL input with its per-input auth headers.
+func inputArgs(in DashInput) []string {
+	var args []string
+	if in.UA != "" {
+		args = append(args, "-user_agent", in.UA)
+	}
+	if in.Referer != "" {
+		args = append(args, "-headers", "Referer: "+in.Referer)
+	}
+	return append(args, "-i", in.URL)
+}
+
+func headerValue(headers map[string]string, name string) string {
+	for k, v := range headers {
+		if strings.EqualFold(k, name) {
+			return v
+		}
+	}
+	return ""
+}
+
 // Run spawns the ffmpeg relay (and the pre-ffmpeg converter for ts HLS).
 // The main ffmpeg is killed when ctx ends; Quit() ends it gracefully.
 func Run(ctx context.Context, opts Options) (*FF, error) {
@@ -76,13 +105,7 @@ func Run(ctx context.Context, opts Options) (*FF, error) {
 	switch opts.StreamType {
 	case TDASH:
 		for _, in := range opts.DashInputs {
-			if in.UA != "" {
-				args = append(args, "-user_agent", in.UA)
-			}
-			if in.Referer != "" {
-				args = append(args, "-headers", "Referer: "+in.Referer)
-			}
-			args = append(args, "-i", in.URL)
+			args = append(args, inputArgs(in)...)
 		}
 		args = append(args, "-i", opts.DanmakuURL)
 		if len(opts.DashInputs) >= 2 {
@@ -91,11 +114,29 @@ func Run(ctx context.Context, opts Options) (*FF, error) {
 			// single direct input: video+audio in stream 0, danmaku is input 1
 			args = append(args, "-map", "0:v:0?", "-map", "0:a:0?", "-map", "1:s:0", "-map", "1:s:1?")
 		}
+	case TFLV:
+		if opts.SourceURL != "" {
+			// Direct pull; -rw_timeout stands in for the Go downloader's
+			// watchdog: a stalled connection aborts ffmpeg and the outer
+			// reconnect loop takes over. It must precede the -i it bounds.
+			args = append(args, "-rw_timeout", "15000000")
+			args = append(args, inputArgs(DashInput{
+				URL:     opts.SourceURL,
+				UA:      headerValue(opts.SourceHeaders, "User-Agent"),
+				Referer: headerValue(opts.SourceHeaders, "Referer"),
+			})...)
+			args = append(args, "-i", opts.DanmakuURL)
+			args = append(args, "-map", "0:v:0?", "-map", "0:a:0?", "-map", "1:s:0", "-map", "1:s:1?")
+			break
+		}
+		args = append(args, "-i", opts.VideoURL)
+		args = append(args, "-i", opts.DanmakuURL)
+		args = append(args, "-map", "0:v:0?", "-map", "0:a:0?", "-map", "1:s:0", "-map", "1:s:1?")
 	case THLS0:
 		args = append(args, "-i", "-")
 		args = append(args, "-i", opts.DanmakuURL)
 		args = append(args, "-map", "0:v:0?", "-map", "0:a:0?", "-map", "1:s:0", "-map", "1:s:1?")
-	default: // FLV and HLS1 read the socket directly
+	default: // HLS1 reads the socket directly
 		args = append(args, "-i", opts.VideoURL)
 		args = append(args, "-i", opts.DanmakuURL)
 		args = append(args, "-map", "0:v:0?", "-map", "0:a:0?", "-map", "1:s:0", "-map", "1:s:1?")
@@ -170,6 +211,10 @@ func (f *FF) runPreFF(ctx context.Context, videoURL string) error {
 	return nil
 }
 
+// DebugLog, when set, receives ffmpeg's stderr lines (the dmlive package
+// wires this to its leveled logger, mirroring Rust's info!-per-line).
+var DebugLog func(string)
+
 // parseStderr drives the video-info / output-ready callbacks from ffmpeg's
 // log lines (Rust get_video_info).
 func (f *FF) parseStderr(stderr io.ReadCloser) {
@@ -180,6 +225,9 @@ func (f *FF) parseStderr(stderr io.ReadCloser) {
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
 		line := sc.Text()
+		if DebugLog != nil {
+			DebugLog(line)
+		}
 		if dmRe.MatchString(line) {
 			if !ffreadySent {
 				ffreadySent = true

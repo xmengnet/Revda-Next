@@ -12,11 +12,13 @@ import (
 	"time"
 
 	"revda/internal/config"
+	"revda/internal/engine/dmlive"
 	"revda/internal/imagecache"
 	"revda/internal/player"
 	"revda/internal/sites"
 
 	"github.com/egoist/mygo"
+	"github.com/egoist/mygo/plugins/loading"
 	"github.com/egoist/mygo/ui"
 )
 
@@ -300,10 +302,10 @@ func (a *App) Open(input string) {
 }
 
 func (a *App) OpenDirect(code string, record bool) {
-	// LaunchDirectWithConfig blocks on stream resolution, so run it in the
-	// background — calling it from a UI event freezes the whole window until
-	// mpv appears.
-	a.SetStatus(fmt.Sprintf("正在解析并拉起 Go 原生播放: %s ...", code), false)
+	// The engine blocks for the whole session (resolve → mpv until the
+	// window closes), so run it in the background — calling it from a UI
+	// event would freeze the whole window.
+	a.SetStatus(fmt.Sprintf("正在解析并拉起播放: %s ...", code), false)
 	go func() {
 		// Videos and bangumi have no "live" state to check; a live room that
 		// is not streaming is caught here before the engine reports it as a
@@ -314,20 +316,42 @@ func (a *App) OpenDirect(code string, record bool) {
 				return
 			}
 		}
-		dData := a.dmliveCfg.Get()
-		if err := player.LaunchDirectWithConfigRecord(code, dData, record); err != nil {
-			a.SetStatus(playFailureMessage(err, code), true)
+		_, playURL, err := sites.NormalizeInput(code)
+		if err != nil {
+			a.SetStatus(fmt.Sprintf("解析错误: %v", err), true)
 			return
 		}
-		_ = a.cfgMgr.AddHistory(code)
-		a.mu.Lock()
-		a.historyRooms = a.cfgMgr.GetHistory()
-		a.mu.Unlock()
-		msg := "已通过 Go 原生引擎极速拉起播放"
-		if record {
-			msg = "已启动播放并录制(含弹幕字幕轨)"
+		started := false
+		// Deliberately a background context: like the Rust GUI spawning the
+		// dmlive binary, playback outlives the app window.
+		engineErr := dmlive.Run(context.Background(), dmlive.Options{
+			URL:                playURL,
+			RecordWhilePlaying: record,
+			Quiet:              true,
+			ResolveAttempts:    3,
+			LogLevel:           2, // info: resolve failures land in the app log
+			OnStarted: func() {
+				started = true
+				_ = a.cfgMgr.AddHistory(code)
+				a.mu.Lock()
+				a.historyRooms = a.cfgMgr.GetHistory()
+				a.mu.Unlock()
+				msg := "已拉起播放"
+				if record {
+					msg = "已启动播放并录制"
+				}
+				a.SetStatus(fmt.Sprintf("%s: %s", msg, code), false)
+			},
+		})
+		if engineErr != nil {
+			if started {
+				// The session ran but ended abnormally (resolve of a
+				// reconnect round failed, relay error, ...).
+				a.SetStatus(fmt.Sprintf("播放已结束(%v): %s", engineErr, code), true)
+			} else {
+				a.SetStatus(playFailureMessage(engineErr, code), true)
+			}
 		}
-		a.SetStatus(fmt.Sprintf("%s: %s", msg, code), false)
 	}()
 }
 
@@ -583,7 +607,7 @@ func (a *App) View(c *ui.Context) {
 
 			// Search / Input box
 			inputEl := ui.TextInput(c.Key("input_box"), &a.inputRoom).
-				Placeholder("输入直播间代码或网址 (如 bi-545342, do-475252, hu-660118, dy-271387799639, BV...)...").
+				Placeholder("输入房间号或直播/视频链接，回车播放").
 				Grow(1)
 
 			if inputEl.Submitted() {
@@ -978,16 +1002,16 @@ func (a *App) renderCard(c *ui.Context, code string) {
 						Radius(8, 8, 0, 0)
 				} else {
 					ui.Column(c).Fill().Center().Children(func() {
-						ui.Text(c, "封面加载中...").FontSize(11).TextColor(t.TextMuted)
+						loading.Atom(c, loading.Options{Size: 24, Color: t.Accent})
 					})
 				}
 			} else {
 				ui.Column(c).Fill().Center().Children(func() {
-					txt := "无封面"
 					if isLoading {
-						txt = "正在获取信息..."
+						loading.Atom(c, loading.Options{Size: 24, Color: t.Accent})
+					} else {
+						ui.Text(c, "无封面").FontSize(11).TextColor(t.TextMuted)
 					}
-					ui.Text(c, txt).FontSize(11).TextColor(t.TextMuted)
 				})
 			}
 		})

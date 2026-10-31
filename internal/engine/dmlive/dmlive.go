@@ -16,6 +16,7 @@ import (
 
 	"revda/internal/config"
 	"revda/internal/engine/danmaku"
+	"revda/internal/engine/ffmpegctl"
 	"revda/internal/engine/mpvctl"
 	"revda/internal/engine/streamfinder"
 )
@@ -33,6 +34,16 @@ type Options struct {
 	HTTPAddress string
 	// LogLevel: 1 debug, 2 info, 3 warn (default), 4 error.
 	LogLevel int
+	// RecordWhilePlaying is the GUI's "play & record": keep the mpv window
+	// and additionally record the session. Live danmaku rides the relayed
+	// matroska; video danmaku is muxed in after mpv exits.
+	RecordWhilePlaying bool
+	// ResolveAttempts caps the resolve retry rounds (0 = Rust default 20,
+	// 3s apart).
+	ResolveAttempts int
+	// OnStarted fires once when mpv has been spawned in a play mode, giving
+	// GUI callers an "it's up" signal long before Run returns.
+	OnStarted func()
 }
 
 type Site int
@@ -41,6 +52,7 @@ const (
 	SiteBiliLive Site = iota
 	SiteBiliVideo
 	SiteBahaVideo
+	SiteDouyinLive
 	SiteDouyuLive
 	SiteHuyaLive
 	SiteTwitchLive
@@ -58,6 +70,8 @@ func DetectSite(rawURL string) (Site, int, error) {
 		return SiteBiliVideo, pageOf(rawURL), nil
 	case strings.Contains(rawURL, "ani.gamer.com.tw/"):
 		return SiteBahaVideo, pageOf(rawURL), nil
+	case strings.Contains(rawURL, "douyin.com/"):
+		return SiteDouyinLive, 0, nil
 	case strings.Contains(rawURL, "douyu.com/"):
 		return SiteDouyuLive, 0, nil
 	case strings.Contains(rawURL, "huya.com/"):
@@ -109,6 +123,13 @@ type Runtime struct {
 	lastDanmakuID string
 	pageURL       string // override URL with the active ?p= page
 	pageMu        sync.Mutex
+	lastVideoMsgs []danmaku.VideoDanmaku // kept for the play&record post-mux
+	lastVideoMu   sync.Mutex
+
+	// play&record state
+	recordDir  string // config record_path or ~/Videos/revda
+	recordPath string // stream-record target, fixed at first arm
+	recordMu   sync.Mutex
 
 	displayFPS atomic.Uint64
 	fpsCounter atomic.Uint64
@@ -122,6 +143,7 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 	setLogLevel(opts.LogLevel)
+	ffmpegctl.DebugLog = func(line string) { logDebugf("[ffmpeg] %s", line) }
 
 	cfgMgr, err := config.NewDmliveConfigManager()
 	if err != nil {
@@ -132,14 +154,15 @@ func Run(ctx context.Context, opts Options) error {
 	settings.Quiet.Store(opts.Quiet)
 
 	r := &Runtime{
-		opts:     opts,
-		site:     site,
-		page:     page,
-		bcookie:  cfg.BCookie,
-		cfgMgr:   cfgMgr,
-		settings: settings,
-		live:     danmaku.NewLiveDanmaku(settings),
-		mpvDone:  make(chan struct{}),
+		opts:      opts,
+		site:      site,
+		page:      page,
+		bcookie:   cfg.BCookie,
+		cfgMgr:    cfgMgr,
+		settings:  settings,
+		live:      danmaku.NewLiveDanmaku(settings),
+		mpvDone:   make(chan struct{}),
+		recordDir: cfg.RecordPath,
 	}
 	if r.danmakuLn, r.videoLn, r.f2mURL, err = newRelaySockets(); err != nil {
 		return err
@@ -211,6 +234,8 @@ func (r *Runtime) resolveOnce(ctx context.Context) (*streamfinder.StreamInfo, er
 		finder = streamfinder.NewBiliVideoFinder(r.bcookie)
 	case SiteBahaVideo:
 		finder = streamfinder.NewBahaFinder()
+	case SiteDouyinLive:
+		finder = streamfinder.NewDouyinFinder()
 	case SiteDouyuLive:
 		finder = streamfinder.NewDouyuFinder()
 	case SiteHuyaLive:
@@ -222,16 +247,26 @@ func (r *Runtime) resolveOnce(ctx context.Context) (*streamfinder.StreamInfo, er
 	default:
 		return nil, errors.New("no finder for site")
 	}
+	target := r.currentURL()
+	if r.site == SiteYoutubeLive && strings.Contains(target, "/@") && !strings.Contains(target, "/live") {
+		// Channel handles must be pinned to /live or the page may yield a
+		// trailer VOD instead of the stream.
+		target = strings.TrimRight(target, "/") + "/live"
+	}
 	resolveCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	return finder.Resolve(resolveCtx, r.currentURL())
+	return finder.Resolve(resolveCtx, target)
 }
 
-// resolve retries like Rust StreamFinder::run: 20 attempts 3s apart, then
-// wait-interval seconds between further rounds until success.
+// resolve retries like Rust StreamFinder::run: attempts 3s apart (default
+// 20), then wait-interval seconds between further rounds until success.
 func (r *Runtime) resolve(ctx context.Context) (*streamfinder.StreamInfo, error) {
+	attempts := r.opts.ResolveAttempts
+	if attempts <= 0 {
+		attempts = 20
+	}
 	for {
-		for i := 0; i < 20; i++ {
+		for i := 0; i < attempts; i++ {
 			info, err := r.resolveOnce(ctx)
 			if err == nil {
 				return info, nil

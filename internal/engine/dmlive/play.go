@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -54,6 +56,41 @@ func (r *Runtime) currentURL() string {
 	return r.opts.URL
 }
 
+// notifyStarted fires the Options.OnStarted hook once (GUI "it's up").
+func (r *Runtime) notifyStarted() {
+	if r.opts.OnStarted != nil {
+		r.opts.OnStarted()
+		r.opts.OnStarted = nil // exactly once per session
+	}
+}
+
+// armRecordPath fixes the stream-record target (named after the resolved
+// title like every dmlive recording) on the first call and returns it;
+// subsequent calls return "" — mpv keeps the property across reconnects and
+// re-setting it could reopen the file.
+func (r *Runtime) armRecordPath(title string) string {
+	r.recordMu.Lock()
+	defer r.recordMu.Unlock()
+	if r.recordPath != "" {
+		return "" // already armed
+	}
+	dir := r.recordDir
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			logErrorf("record path: %v", err)
+			return ""
+		}
+		dir = filepath.Join(home, "Videos", "revda")
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		logErrorf("record dir: %v", err)
+		return ""
+	}
+	r.recordPath = filepath.Join(dir, recordFilename(title, "mkv"))
+	return r.recordPath
+}
+
 // playLive is the live-site play mode: resolve → relay through ffmpeg → mpv
 // plays the muxed matroska flow. When the source ends the loop reconnects
 // after 1s, until resolve fails or mpv closes.
@@ -63,6 +100,7 @@ func (r *Runtime) playLive(ctx context.Context) error {
 		return err
 	}
 	r.mpv = mpv
+	r.notifyStarted()
 	go r.mpvMonitor(ctx)
 	go r.handleMpvEvents(ctx)
 
@@ -130,9 +168,12 @@ func (r *Runtime) liveIteration(ctx context.Context, record bool) error {
 			}
 		})
 	}
-	// Direct DASH sources have no streamer task, so the danmaku flow starts
-	// together with ffmpeg instead of on StreamReady.
-	if st == ffmpegctl.TDASH {
+	// Sources without a Go-side downloader (direct DASH URLs; FLV pulled by
+	// ffmpeg itself — some FLV CDNs reject Go's TLS fingerprint) start the
+	// danmaku flow together with ffmpeg instead of on StreamReady.
+	startDanmakuEarly := st == ffmpegctl.TDASH ||
+		(st == ffmpegctl.TFLV && info.URL != "")
+	if startDanmakuEarly {
 		startDanmaku()
 	}
 
@@ -158,6 +199,14 @@ func (r *Runtime) liveIteration(ctx context.Context, record bool) error {
 			return
 		}
 		if r.mpv != nil {
+			// Recording arms before the loadfile so the file captures the
+			// stream from its first byte; the danmaku subtitle tracks are
+			// already muxed into the relayed matroska.
+			if r.opts.RecordWhilePlaying {
+				if path := r.armRecordPath(info.Title); path != "" {
+					_ = r.mpv.Command("set_property", "stream-record", path)
+				}
+			}
 			_ = r.mpv.LoadFile(r.f2mURL, "")
 			_ = r.mpv.Command("set_property", "sub-visibility", true)
 		}
@@ -165,6 +214,16 @@ func (r *Runtime) liveIteration(ctx context.Context, record bool) error {
 
 	ffDone := make(chan struct{})
 	go func() { _ = ff.Wait(); close(ffDone) }()
+
+	if startDanmakuEarly {
+		// No Go-side downloader: the relay owns the source and runs until
+		// the stream ends or -rw_timeout aborts a stalled connection.
+		<-ffDone
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return nil
+	}
 
 	streamErr := r.runStreamer(ffCtx, info, st, startDanmaku)
 	if streamErr != nil {
@@ -191,6 +250,12 @@ func (r *Runtime) relayOptions(info *streamfinder.StreamInfo, st ffmpegctl.Strea
 		VideoURL:   r.videoURL,
 		DanmakuURL: r.danmakuURL,
 		Output:     r.f2mURL,
+	}
+	if st == ffmpegctl.TFLV {
+		// FLV CDNs (douyu edgesrv at least) reject Go's TLS fingerprint,
+		// so the relay pulls the source itself instead of the Go streamer.
+		opts.SourceURL = info.URL
+		opts.SourceHeaders = info.Headers
 	}
 	if record && r.opts.HTTPAddress != "" {
 		opts.Output = r.opts.HTTPAddress
@@ -224,20 +289,15 @@ func modeOf(record bool) ffmpegctl.RunMode {
 	return ffmpegctl.ModePlay
 }
 
-// runStreamer dispatches the downloader for the resolved stream type. DASH
-// sources are read by ffmpeg directly and need no streamer.
+// runStreamer dispatches the Go-side downloader. Only HLS needs one
+// (segment scheduling + ad skipping); DASH and FLV sources are pulled by
+// ffmpeg directly.
 func (r *Runtime) runStreamer(ctx context.Context, info *streamfinder.StreamInfo, st ffmpegctl.StreamType, onReady func()) error {
 	switch st {
-	case ffmpegctl.TFLV:
-		cookie := ""
-		if r.opts.Plive && r.site == SiteBiliLive {
-			cookie = r.bcookie
-		}
-		return streamer.RunFLV(ctx, info.URL, r.opts.URL, cookie, r.opts.Plive, r.videoLn, onReady)
 	case ffmpegctl.THLS0, ffmpegctl.THLS1:
 		h := streamer.NewHLS(info.URL, "", r.site == SiteTwitchLive)
 		return h.Run(ctx, r.videoLn, onReady)
-	default: // TDASH
+	default:
 		return nil
 	}
 }
@@ -259,8 +319,13 @@ func (r *Runtime) playVideo(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-r.mpvDone:
-		return nil
 	}
+	// Play&record of a video: the danmaku track never entered the EDL, so
+	// mux it into the stream-record file now (live sessions don't need this).
+	if r.opts.RecordWhilePlaying {
+		r.muxVideoDanmaku()
+	}
+	return nil
 }
 
 // loadVideoPage resolves one page and points mpv at it. Serialized: page
@@ -287,6 +352,13 @@ func (r *Runtime) loadVideoPage(ctx context.Context, page int) {
 	edl := fmt.Sprintf("edl://!no_clip;!no_chapters;%%%d%%%s;!new_stream;!no_clip;!no_chapters;%%%d%%%s",
 		len(info.AudioURL), info.AudioURL, len(info.URL), info.URL)
 	logInfof("load video page %d: %s", page, info.Title)
+	if r.opts.RecordWhilePlaying {
+		// The static danmaku track lives outside the EDL; it is muxed into
+		// the recording after mpv exits (muxVideoDanmaku).
+		if path := r.armRecordPath(info.Title); path != "" {
+			_ = r.mpv.Command("set_property", "stream-record", path)
+		}
+	}
 	_ = r.mpv.LoadFile(edl, info.Title)
 }
 
@@ -301,6 +373,9 @@ func (r *Runtime) serveVideoDanmaku(ctx context.Context, cid string, ratio float
 		logErrorf("fetch video danmaku: %v", err)
 		return
 	}
+	r.lastVideoMu.Lock()
+	r.lastVideoMsgs = msgs
+	r.lastVideoMu.Unlock()
 	_ = danmaku.ServeStaticASS(ctx, r.danmakuLn, msgs, r.settings)
 }
 
@@ -399,6 +474,8 @@ func (r *Runtime) newLiveDanmakuClient() (danmakuClient, bool) {
 	switch r.site {
 	case SiteBiliLive:
 		return danmaku.NewBilibiliDanmakuClient(roomID), true
+	case SiteDouyinLive:
+		return danmaku.NewDouyinDanmakuClient(roomID), true
 	case SiteDouyuLive:
 		return danmaku.NewDouyuDanmakuClient(roomID), true
 	case SiteHuyaLive:
