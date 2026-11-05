@@ -25,13 +25,18 @@ Linux 平台下的弹幕直播与视频播放工具（基于 Go + MyGo 的全新
 | Twitch | ✓ | ✓ | | |
 
 ## Screenshot
-[![Screenshot.png](https://raw.githubusercontent.com/THMonster/Revda/master/pictures/s1.png)](https://raw.githubusercontent.com/THMonster/Revda/master/pictures/s1.png)
-[![Screenshot.png](https://raw.githubusercontent.com/THMonster/Revda/master/pictures/s2.png)](https://raw.githubusercontent.com/THMonster/Revda/master/pictures/s2.png)
+
+| 深色主题 | 浅色主题 |
+|:---:|:---:|
+| ![深色主题](pictures/revda-main-dark.png) | ![浅色主题](pictures/revda-main-light.png) |
+
+![播放与弹幕设置](pictures/revda-settings-dark.png)
+
+> 截图由 MyGo 的离屏渲染测试生成（`REVDA_SCREENSHOTS=1 go test -run TestGenerateScreenshots ./internal/app`），房间与封面均为虚构数据。
 
 ## Requirements
 * cmake (for build)
-* [go](https://go.dev/) (>= 1.22, for build)
-* a proper [rust](https://kaisery.github.io/trpl-zh-cn/ch01-01-installation.html) compiler with cargo (for build dmlive)
+* [go](https://go.dev/) (>= 1.27, for build)
 * [mpv](https://github.com/mpv-player/mpv)
 * ffmpeg
 
@@ -69,7 +74,7 @@ cd Revda
 mkdir build
 cd build
 cmake -DCMAKE_BUILD_TYPE=Release ..
-# 若不需要编译保留的 Rust dmlive：
+# 若不需要安装纯 Go 的 dmlive 命令行：
 # cmake -DCMAKE_BUILD_TYPE=Release -DNODMLIVE=1 ..
 make
 sudo make install/fast
