@@ -52,10 +52,16 @@ type DMSettings struct {
 	RatioScale float64Atomic
 	ShowNick   atomic.Bool
 	Quiet      atomic.Bool
+
+	// areaPct is how much of the 1080p canvas the scroll lanes may use, and
+	// anchor where that area sits (0 top, 1 middle, 2 bottom). Both are fixed
+	// for a session.
+	areaPct int
+	anchor  int
 }
 
 // NewDMSettings builds settings with dmlive's config defaults.
-func NewDMSettings(speedMS uint64, fontScale, fontAlpha float64) *DMSettings {
+func NewDMSettings(speedMS uint64, fontScale, fontAlpha float64, areaPct int, anchor string) *DMSettings {
 	s := &DMSettings{}
 	if speedMS < 1000 || speedMS > 30000 {
 		speedMS = 8000
@@ -70,6 +76,8 @@ func NewDMSettings(speedMS uint64, fontScale, fontAlpha float64) *DMSettings {
 	}
 	s.FontAlpha.Store(fontAlpha)
 	s.RatioScale.Store(1.0)
+	s.areaPct = clampDanmakuArea(areaPct)
+	s.anchor = anchorIndex(anchor)
 	return s
 }
 
@@ -78,14 +86,21 @@ func (s *DMSettings) FontSize() int {
 	return int(40 * s.FontScale.Load())
 }
 
-// ChannelNum is the lane count: ceil(540 / font size) over the 1080p canvas.
+// ChannelNum is the lane count the covered area holds.
 func (s *DMSettings) ChannelNum() int {
-	fs := s.FontSize()
-	if fs <= 0 {
-		fs = 40
-	}
-	return int(math.Ceil(540.0 / float64(fs)))
+	return danmakuChannelNum(s.FontSize(), s.areaPct)
 }
+
+// LaneY is the top of lane on the 1080p canvas.
+func (s *DMSettings) LaneY(lane int) int {
+	return danmakuBaseY(s.areaPct, s.anchor) + lane*s.FontSize()
+}
+
+// AreaPercent is the covered share of the canvas, for the video renderer.
+func (s *DMSettings) AreaPercent() int { return s.areaPct }
+
+// Anchor is "top", "middle" or "bottom", for the video renderer.
+func (s *DMSettings) Anchor() string { return anchorName(s.anchor) }
 
 // BGRColor converts a 6-hex RGB color to ASS's &HBBGGRR payload form.
 func (s *DMSettings) BGRColor(color string) string {
@@ -200,10 +215,13 @@ func (l *LiveDanmaku) launchSingle(d *DanmakuMessage, timeMS int64, track byte, 
 	speed := s.SpeedMS.Load()
 	fs := s.FontSize()
 	alpha := s.AlphaHex()
+	cleanNick := CleanDanmakuText(d.Nick)
+	cleanText := CleanDanmakuText(d.Text)
 	nickPrefix, sep := "", ""
 	if s.ShowNick.Load() {
-		nickPrefix, sep = d.Nick, ": "
+		nickPrefix, sep = escapeASSText(cleanNick), ": "
 	}
+	text := escapeASSText(cleanText)
 
 	var ass string
 	var dur uint64
@@ -218,8 +236,10 @@ func (l *LiveDanmaku) launchSingle(d *DanmakuMessage, timeMS int64, track byte, 
 			} else {
 				dur = 200
 			}
+		} else if text == "" {
+			return false // emoji-only or punctuation-only: nothing to draw
 		} else {
-			displayLen := l.lanes.displayLength(s, d.Nick, d.Text)
+			displayLen := l.lanes.displayLength(s, cleanNick, cleanText)
 			lane, ok := l.lanes.getAvailable(s, uint64(timeMS), displayLen)
 			if !ok {
 				ass = fmt.Sprintf("%d,0,Default,dmlive-empty,0,0,0,,", l.nextReadOrder())
@@ -229,17 +249,20 @@ func (l *LiveDanmaku) launchSingle(d *DanmakuMessage, timeMS int64, track byte, 
 					dur = 200
 				}
 			} else {
-				y := lane * fs
+				y := s.LaneY(lane)
 				ass = fmt.Sprintf("%d,0,Default,%s,0,0,0,,{\\alpha%s\\fs%d\\1c&%s&\\move(1920,%d,%d,%d)}%s%s%s",
-					l.nextReadOrder(), d.Nick, alpha, fs, s.BGRColor(color), y, -displayLen, y,
-					nickPrefix, sep, d.Text)
+					l.nextReadOrder(), escapeASSText(cleanNick), alpha, fs, s.BGRColor(color), y, -displayLen, y,
+					nickPrefix, sep, text)
 				dur = speed
 			}
 		}
 	} else {
+		if text == "" {
+			return false
+		}
 		ass = fmt.Sprintf("%d,0,Default,%s,0,0,0,,{\\alpha%s\\fs%d\\1c&%s&\\an%d}%s%s%s",
-			l.nextReadOrder(), d.Nick, alpha, fs, s.BGRColor(d.Color), d.Position,
-			nickPrefix, sep, d.Text)
+			l.nextReadOrder(), escapeASSText(cleanNick), alpha, fs, s.BGRColor(d.Color), d.Position,
+			nickPrefix, sep, text)
 		dur = speed
 	}
 	cluster.AddASSBlock(uint64(timeMS), []byte(ass), dur, track)
@@ -383,6 +406,10 @@ func ServeStaticASS(ctx context.Context, ln net.Listener, msgs []VideoDanmaku, s
 	speed := s.SpeedMS.Load()
 
 	for _, m := range sorted {
+		text := CleanDanmakuText(m.Text)
+		if text == "" {
+			continue
+		}
 		color := m.Color
 		if len(color) != 6 {
 			color = "ffffff"
@@ -396,17 +423,17 @@ func ServeStaticASS(ctx context.Context, ln net.Listener, msgs []VideoDanmaku, s
 		t1 := formatASSTimeOfDay(m.Offset)
 		t2 := formatASSTimeOfDay(m.Offset + time.Duration(speed)*time.Millisecond)
 		if pos == 0 {
-			displayLen := lanes.displayLength(s, "", m.Text)
+			displayLen := lanes.displayLength(s, "", text)
 			lane, ok := lanes.getAvailable(s, uint64(m.Offset.Milliseconds()), displayLen)
 			if !ok {
 				continue
 			}
-			y := lane * fs
+			y := s.LaneY(lane)
 			fmt.Fprintf(&b, "Dialogue: 0,%s,%s,Default,,0,0,0,,{\\alpha%s\\fs%d\\1c&%s&\\move(1920,%d,%d,%d)}%s\n",
-				t1, t2, s.AlphaHex(), fs, s.BGRColor(color), y, -displayLen, y, m.Text)
+				t1, t2, s.AlphaHex(), fs, s.BGRColor(color), y, -displayLen, y, escapeASSText(text))
 		} else {
 			fmt.Fprintf(&b, "Dialogue: 0,%s,%s,Default,,0,0,0,,{\\alpha%s\\fs%d\\1c&%s&\\an%d}%s\n",
-				t1, t2, s.AlphaHex(), fs, s.BGRColor(color), pos, m.Text)
+				t1, t2, s.AlphaHex(), fs, s.BGRColor(color), pos, escapeASSText(text))
 		}
 	}
 

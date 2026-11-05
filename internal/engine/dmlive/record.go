@@ -27,7 +27,7 @@ func (r *Runtime) muxVideoDanmaku() {
 	if len(msgs) == 0 {
 		return
 	}
-	ass := danmaku.RenderVideoASS(msgs, r.settings.FontScale.Load(), r.settings.FontAlpha.Load(), int(r.settings.SpeedMS.Load()))
+	ass := danmaku.RenderVideoASS(msgs, r.settings.FontScale.Load(), r.settings.FontAlpha.Load(), int(r.settings.SpeedMS.Load()), r.settings.AreaPercent(), r.settings.Anchor())
 	if !strings.Contains(ass, "Dialogue:") {
 		return
 	}

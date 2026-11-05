@@ -171,7 +171,7 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 	cfg := cfgMgr.Get()
-	settings := danmaku.NewDMSettings(cfg.DanmakuSpeed, cfg.FontScale, cfg.FontAlpha)
+	settings := danmaku.NewDMSettings(cfg.DanmakuSpeed, cfg.FontScale, cfg.FontAlpha, cfg.DanmakuArea, cfg.DanmakuAnchor)
 	settings.Quiet.Store(opts.Quiet)
 
 	r := &Runtime{

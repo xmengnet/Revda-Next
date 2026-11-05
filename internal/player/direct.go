@@ -226,7 +226,7 @@ func startDanmaku(ctx context.Context, roomCode, roomID string, cfg config.Dmliv
 		client = danmaku.NewHuyaDanmakuClient(roomID)
 	}
 
-	renderer := danmaku.NewRenderer(cfg.FontScale, cfg.FontAlpha, int(cfg.DanmakuSpeed))
+	renderer := danmaku.NewRenderer(cfg.FontScale, cfg.FontAlpha, int(cfg.DanmakuSpeed), cfg.DanmakuArea, cfg.DanmakuAnchor)
 	subURL, err := danmaku.StartHTTP(ctx, client.Messages(), renderer)
 	if err != nil {
 		return "", nil, false
@@ -329,7 +329,7 @@ func startVideoDanmaku(ctx context.Context, cid string, cfg config.DmliveConfig)
 	if err != nil {
 		return "", false
 	}
-	ass := danmaku.RenderVideoASS(msgs, cfg.FontScale, cfg.FontAlpha, int(cfg.DanmakuSpeed))
+	ass := danmaku.RenderVideoASS(msgs, cfg.FontScale, cfg.FontAlpha, int(cfg.DanmakuSpeed), cfg.DanmakuArea, cfg.DanmakuAnchor)
 	subURL, err := danmaku.StartStaticHTTP(ctx, ass)
 	if err != nil {
 		return "", false

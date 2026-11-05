@@ -17,6 +17,8 @@ type Renderer struct {
 	fontSize  int
 	fontAlpha float64
 	speedSec  float64
+	areaPct   int
+	anchor    int
 	assZero   time.Time // wall-clock instant that maps to mpv playback time 0
 
 	messages   []*DanmakuMessage
@@ -26,8 +28,9 @@ type Renderer struct {
 
 // NewRenderer creates an ASS renderer matching the dmlive defaults. speedMs
 // is the danmaku screen-crossing duration in milliseconds (the unit the Rust
-// dmlive config uses).
-func NewRenderer(fontScale, fontAlpha float64, speedMs int) *Renderer {
+// dmlive config uses). areaPct caps the screen height the lanes may use and
+// anchor places that area (top, middle or bottom).
+func NewRenderer(fontScale, fontAlpha float64, speedMs int, areaPct int, anchor string) *Renderer {
 	if fontScale <= 0 {
 		fontScale = 1.0
 	}
@@ -41,14 +44,13 @@ func NewRenderer(fontScale, fontAlpha float64, speedMs int) *Renderer {
 		speedSec = 30
 	}
 	fontSize := int(40 * fontScale)
-	numLanes := 1080 / (fontSize + 10)
-	if numLanes < 1 {
-		numLanes = 1
-	}
+	numLanes := danmakuChannelNum(fontSize, areaPct)
 	return &Renderer{
 		fontSize:   fontSize,
 		fontAlpha:  fontAlpha,
 		speedSec:   float64(speedSec),
+		areaPct:    clampDanmakuArea(areaPct),
+		anchor:     anchorIndex(anchor),
 		assZero:    time.Now(),
 		laneBusy:   make([]time.Time, numLanes),
 		maxHistory: 3000, // ~10h at 5 msg/min; keeps memory bounded
@@ -89,8 +91,12 @@ Style: Default,Sans,%d,&H%02XFFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `
 
-// Add buffers one message.
+// Add buffers one message, after dropping glyphs libass cannot draw.
 func (r *Renderer) Add(m *DanmakuMessage) {
+	m.Text = CleanDanmakuText(m.Text)
+	if m.Text == "" {
+		return
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.messages = append(r.messages, m)
@@ -151,7 +157,7 @@ func (r *Renderer) formatOne(m *DanmakuMessage, laneBusy []time.Time, assZero ti
 		busy := time.Duration(r.speedSec * (textWidth/1920.0 + 0.15) * float64(time.Second))
 		laneBusy[lane] = m.Time.Add(busy)
 
-		y := (lane + 1) * (r.fontSize + 10)
+		y := danmakuBaseY(r.areaPct, r.anchor) + lane*r.fontSize
 		endX := -(textWidth + 50)
 		return fmt.Sprintf("Dialogue: 0,%s,%s,Default,,0,0,0,,%s%s{\\move(1920,%d,%d,%d)}%s\n",
 			startStr, endStr, alphaTag, colorTag, y, int(endX), y, escapeASSText(m.Text))

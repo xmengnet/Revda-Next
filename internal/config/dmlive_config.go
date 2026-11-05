@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/pelletier/go-toml/v2"
@@ -19,6 +20,8 @@ type DmliveConfig struct {
 	DanmakuSpeed       uint64  `toml:"danmaku_speed,omitempty"`
 	FontAlpha          float64 `toml:"font_alpha,omitempty"`
 	FontScale          float64 `toml:"font_scale,omitempty"`
+	DanmakuArea        int     `toml:"danmaku_area,omitempty"`   // percent of the 1080p canvas the scroll lanes may use
+	DanmakuAnchor      string  `toml:"danmaku_anchor,omitempty"` // top | middle | bottom
 	RecordPath         string  `toml:"record_path,omitempty"`
 }
 
@@ -49,9 +52,11 @@ func NewDmliveConfigManager() (*DmliveConfigManager, error) {
 	m := &DmliveConfigManager{
 		configPath: path,
 		data: DmliveConfig{
-			DanmakuSpeed: 8000,
-			FontAlpha:    0.0,
-			FontScale:    1.0,
+			DanmakuSpeed:  8000,
+			FontAlpha:     0.0,
+			FontScale:     1.0,
+			DanmakuArea:   50,
+			DanmakuAnchor: "top",
 		},
 	}
 	_ = m.Load()
@@ -86,6 +91,20 @@ func (m *DmliveConfigManager) Load() error {
 	}
 	if c.FontScale <= 0 {
 		c.FontScale = 1.0
+	}
+	switch {
+	case c.DanmakuArea <= 0:
+		c.DanmakuArea = 50 // the engine's historical top half
+	case c.DanmakuArea < 10:
+		c.DanmakuArea = 10
+	case c.DanmakuArea > 100:
+		c.DanmakuArea = 100
+	}
+	switch strings.ToLower(strings.TrimSpace(c.DanmakuAnchor)) {
+	case "top", "middle", "center", "centre", "bottom":
+		c.DanmakuAnchor = strings.ToLower(strings.TrimSpace(c.DanmakuAnchor))
+	default:
+		c.DanmakuAnchor = "top"
 	}
 	m.data = c
 	return nil

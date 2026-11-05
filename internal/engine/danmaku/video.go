@@ -119,7 +119,7 @@ func decodeVideoDanmakuXML(raw []byte) (videoDanmakuXML, error) {
 // RenderVideoASS renders the complete ASS document for a video: timestamps
 // are video positions, lanes are assigned in chronological order, and the
 // result never changes afterwards (single mount, no reload).
-func RenderVideoASS(msgs []VideoDanmaku, fontScale, fontAlpha float64, speedMs int) string {
+func RenderVideoASS(msgs []VideoDanmaku, fontScale, fontAlpha float64, speedMs int, areaPct int, anchor string) string {
 	if fontScale <= 0 {
 		fontScale = 1.0
 	}
@@ -133,10 +133,8 @@ func RenderVideoASS(msgs []VideoDanmaku, fontScale, fontAlpha float64, speedMs i
 		speedSec = 30
 	}
 	fontSize := int(40 * fontScale)
-	numLanes := 1080 / (fontSize + 10)
-	if numLanes < 1 {
-		numLanes = 1
-	}
+	numLanes := danmakuChannelNum(fontSize, areaPct)
+	baseY := danmakuBaseY(clampDanmakuArea(areaPct), anchorIndex(anchor))
 
 	sorted := make([]VideoDanmaku, len(msgs))
 	copy(sorted, msgs)
@@ -149,7 +147,8 @@ func RenderVideoASS(msgs []VideoDanmaku, fontScale, fontAlpha float64, speedMs i
 	alphaTag := fmt.Sprintf("{\\alpha&H%02X&}", int(fontAlpha*255))
 
 	for _, m := range sorted {
-		if m.Text == "" {
+		text := CleanDanmakuText(m.Text)
+		if text == "" {
 			continue
 		}
 		colorTag := ""
@@ -166,7 +165,7 @@ func RenderVideoASS(msgs []VideoDanmaku, fontScale, fontAlpha float64, speedMs i
 				align = 2
 			}
 			fmt.Fprintf(&b, "Dialogue: 0,%s,%s,Default,,0,0,0,,%s%s{\\an%d}%s\n",
-				startStr, endStr, alphaTag, colorTag, align, escapeASSText(m.Text))
+				startStr, endStr, alphaTag, colorTag, align, escapeASSText(text))
 			continue
 		}
 
@@ -180,14 +179,14 @@ func RenderVideoASS(msgs []VideoDanmaku, fontScale, fontAlpha float64, speedMs i
 		if lane == -1 {
 			lane = int(m.Offset.Nanoseconds()) % numLanes
 		}
-		textWidth := float64(len([]rune(m.Text))) * float64(fontSize)
+		textWidth := float64(len([]rune(text))) * float64(fontSize)
 		busy := time.Duration(float64(speedSec) * (textWidth/1920.0 + 0.15) * float64(time.Second))
 		laneBusy[lane] = m.Offset + busy
 
-		y := (lane + 1) * (fontSize + 10)
+		y := baseY + lane*fontSize
 		endX := -(int(textWidth) + 50)
 		fmt.Fprintf(&b, "Dialogue: 0,%s,%s,Default,,0,0,0,,%s%s{\\move(1920,%d,%d,%d)}%s\n",
-			startStr, endStr, alphaTag, colorTag, y, endX, y, escapeASSText(m.Text))
+			startStr, endStr, alphaTag, colorTag, y, endX, y, escapeASSText(text))
 	}
 	return b.String()
 }

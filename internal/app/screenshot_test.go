@@ -95,13 +95,15 @@ func TestGenerateScreenshots(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	a := &App{
-		roomInfos:          make(map[string]*sites.RoomInfo),
-		loading:            make(map[string]bool),
-		currentTheme:       "dark",
-		settingFontScale:   1.0,
-		settingFontOpacity: 1.0,
-		settingSpeed:       8,
-		imgCache:           imagecache.New(nil),
+		roomInfos:            make(map[string]*sites.RoomInfo),
+		loading:              make(map[string]bool),
+		currentTheme:         "dark",
+		settingFontScale:     1.0,
+		settingFontOpacity:   1.0,
+		settingSpeed:         8,
+		settingDanmakuArea:   50,
+		settingDanmakuAnchor: "top",
+		imgCache:             imagecache.New(nil),
 	}
 
 	covers := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

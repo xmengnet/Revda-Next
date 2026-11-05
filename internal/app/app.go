@@ -51,6 +51,8 @@ type App struct {
 	settingFontScale          float64
 	settingFontOpacity        float64
 	settingSpeed              float64
+	settingDanmakuArea        float64 // percent of the screen height
+	settingDanmakuAnchor      string  // top | middle | bottom
 	settingBCookie            string
 	settingCookiesFromBrowser string
 	settingRecordByDefault    bool
@@ -86,6 +88,8 @@ func New() (*App, error) {
 		settingFontScale:          dData.FontScale,
 		settingFontOpacity:        1.0 - dData.FontAlpha,
 		settingSpeed:              float64(dData.DanmakuSpeed) / 1000, // config stores ms; slider is seconds
+		settingDanmakuArea:        float64(dData.DanmakuArea),
+		settingDanmakuAnchor:      dData.DanmakuAnchor,
 		settingBCookie:            dData.BCookie,
 		settingCookiesFromBrowser: dData.CookiesFromBrowser,
 		settingRecordPath:         dData.RecordPath,
@@ -93,6 +97,14 @@ func New() (*App, error) {
 
 	if a.settingFontOpacity < 0.1 || a.settingFontOpacity > 1.0 {
 		a.settingFontOpacity = 1.0
+	}
+	if a.settingDanmakuArea < 10 || a.settingDanmakuArea > 100 {
+		a.settingDanmakuArea = 50
+	}
+	switch a.settingDanmakuAnchor {
+	case "top", "middle", "bottom":
+	default:
+		a.settingDanmakuAnchor = "top"
 	}
 
 	a.applyTheme(a.currentTheme)
@@ -505,6 +517,8 @@ func (a *App) SaveSettings() {
 		DanmakuSpeed:       uint64(max(4, int(a.settingSpeed)) * 1000), // ms, Rust dmlive compatible
 		FontAlpha:          fontAlpha,
 		FontScale:          max(0.5, a.settingFontScale),
+		DanmakuArea:        int(max(10, min(100, a.settingDanmakuArea))),
+		DanmakuAnchor:      a.settingDanmakuAnchor,
 		RecordPath:         recordPath,
 	}
 	if err := a.dmliveCfg.Update(c); err != nil {
@@ -726,7 +740,7 @@ func (a *App) View(c *ui.Context) {
 	// 5. Settings Modal
 	if a.showSettings {
 		ui.Modal(c, &a.showSettings, func() {
-			ui.Column(c).Width(460).Gap(14).Children(func() {
+			ui.Column(c).Width(460).Gap(10).Children(func() {
 				// Title & Close
 				ui.Row(c).FillWidth().AlignItems(ui.Center).Children(func() {
 					ui.Text(c, "播放与弹幕设置").FontSize(18).Bold()
@@ -780,6 +794,33 @@ func (a *App) View(c *ui.Context) {
 				ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(12).Children(func() {
 					ui.Text(c, fmt.Sprintf("弹幕屏幕时长: %d 秒", int(a.settingSpeed))).Width(160)
 					ui.Slider(c.Key("slider_speed"), &a.settingSpeed, 4.0, 20.0).Grow(1)
+				})
+
+				// 弹幕覆盖范围：占屏幕高度的比例，以及区域贴顶/居中/贴底
+				ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(12).Children(func() {
+					ui.Text(c, fmt.Sprintf("弹幕覆盖屏幕高度: %d%%", int(a.settingDanmakuArea))).Width(190)
+					ui.Slider(c.Key("slider_area"), &a.settingDanmakuArea, 10, 100).Grow(1)
+				})
+				ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(12).Children(func() {
+					ui.Text(c, "弹幕区域位置:").Width(190)
+					anchors := []struct {
+						id, name string
+					}{
+						{"top", "顶部"},
+						{"middle", "居中"},
+						{"bottom", "底部"},
+					}
+					ui.Row(c).Gap(6).Children(func() {
+						for _, an := range anchors {
+							btn := ui.Button(c.Key("anchor_"+an.id), an.name)
+							if a.settingDanmakuAnchor == an.id {
+								btn.Background(t.Accent).TextColor(t.AccentText)
+							}
+							if btn.Clicked() {
+								a.settingDanmakuAnchor = an.id
+							}
+						}
+					})
 				})
 
 				ui.Divider(c)

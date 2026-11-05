@@ -12,6 +12,7 @@ Linux 平台下的弹幕直播与视频播放工具（基于 Go + MyGo 的全新
 * **音画与弹幕录制**：支持直播一键录制，自动将实时弹幕封装为内嵌字幕轨（MKV），无需后期二次压制。
 * **全平台多站点覆盖**：完整支持 Bilibili 直播、普通视频与番剧（自动连播与选集），以及斗鱼、虎牙、抖音、YouTube、Twitch 等平台。
 * **B 站高画质**：可手动填写 Cookie，或从 Chrome / Chromium / Firefox 自动读取 B 站登录 Cookie，解锁 1080P60 / 4K。
+* **干净弹幕**：自动过滤 emoji 等 ASS/libass 无法渲染的字符，避免方框；弹幕覆盖屏幕的高度与位置可在设置中调整。
 * **无缝兼容**：配置与收藏兼容原有配置规则（`~/.config/dmlive/config.toml`）。
 
 ## Support Status

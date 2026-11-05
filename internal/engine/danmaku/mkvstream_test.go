@@ -127,7 +127,7 @@ func TestFormatASSTimeOfDay(t *testing.T) {
 }
 
 func TestLaneAllocator(t *testing.T) {
-	s := NewDMSettings(8000, 1.0, 0)
+	s := NewDMSettings(8000, 1.0, 0, 50, "top")
 	l := &laneState{}
 	l.reset()
 
@@ -147,7 +147,7 @@ func TestLaneAllocator(t *testing.T) {
 }
 
 func TestDMSettingsDefaults(t *testing.T) {
-	s := NewDMSettings(8000, 1.0, 0)
+	s := NewDMSettings(8000, 1.0, 0, 50, "top")
 	if s.FontSize() != 40 {
 		t.Fatalf("font size = %d", s.FontSize())
 	}
@@ -169,7 +169,7 @@ func TestDMSettingsDefaults(t *testing.T) {
 func TestServeStaticASSDocument(t *testing.T) {
 	// End-to-end over a real loopback listener: ServeStaticASS must write a
 	// header + sorted Dialogue lines to the first connection and close it.
-	s := NewDMSettings(8000, 1.0, 0)
+	s := NewDMSettings(8000, 1.0, 0, 50, "top")
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Skipf("loopback listener unavailable: %v", err)
@@ -215,5 +215,67 @@ func TestServeStaticASSDocument(t *testing.T) {
 	// Top danmaku maps to \an8 and must not allocate a scroll lane offset.
 	if !strings.Contains(out, "\\an8}") {
 		t.Fatalf("fixed danmaku missing \\an8:\n%s", out)
+	}
+}
+
+func TestCleanDanmakuText(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"中文测试 abc", "中文测试 abc"},
+		{"主播😭👊🐷太强了", "主播太强了"},
+		{"🐷🐗😭👊", ""},
+		{"第一行\n第二行\t结尾", "第一行 第二行 结尾"},
+		{"a\u200bb{tag}\\x", "ab{tag}\\x"},
+	}
+	for _, c := range cases {
+		if got := CleanDanmakuText(c.in); got != c.want {
+			t.Errorf("CleanDanmakuText(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+	if got := CleanDanmakuText(strings.Repeat("字", 400)); len([]rune(got)) != 301 {
+		t.Errorf("long text not capped: %d runes", len([]rune(got)))
+	}
+}
+
+func TestDanmakuLayout(t *testing.T) {
+	s := NewDMSettings(8000, 1.0, 0, 25, "top")
+	if got, want := s.ChannelNum(), 7; got != want { // ceil(1080*25% / 40)
+		t.Fatalf("top lanes = %d, want %d", got, want)
+	}
+	if got := s.LaneY(0); got != 0 {
+		t.Fatalf("top base = %d", got)
+	}
+	s = NewDMSettings(8000, 1.0, 0, 25, "middle")
+	if got, want := s.LaneY(0), 405; got != want { // (1080-270)/2
+		t.Fatalf("middle base = %d, want %d", got, want)
+	}
+	s = NewDMSettings(8000, 1.0, 0, 25, "bottom")
+	if got, want := s.LaneY(0), 810; got != want {
+		t.Fatalf("bottom base = %d, want %d", got, want)
+	}
+	s = NewDMSettings(8000, 1.0, 0, 1, "top")        // clamped to 10%
+	if got, want := s.ChannelNum(), 3; got != want { // ceil(108/40)
+		t.Fatalf("clamped lanes = %d, want %d", got, want)
+	}
+}
+
+func TestLaunchSingleCleansAndEscapes(t *testing.T) {
+	s := NewDMSettings(8000, 1.0, 0, 50, "top")
+	s.ShowNick.Store(true)
+	l := NewLiveDanmaku(s)
+	cluster := NewDMKVCluster()
+	cluster.Reset(0)
+	m := &DanmakuMessage{Nick: "a{b😭", Text: "主播😭{tag}\\x👊", Color: "ffffff", Time: time.Now()}
+	if !l.launchSingle(m, 1000, 1, cluster) {
+		t.Fatal("message dropped")
+	}
+	out := string(cluster.WriteToBytes())
+	if strings.Contains(out, "😭") || strings.Contains(out, "👊") {
+		t.Fatalf("emoji reached the ASS block: %q", out)
+	}
+	if !strings.Contains(out, `\{tag\}`) || !strings.Contains(out, `\\x`) {
+		t.Fatalf("ASS text not escaped: %q", out)
+	}
+	if !strings.Contains(out, `a\{b`) {
+		t.Fatalf("nick not escaped: %q", out)
 	}
 }
