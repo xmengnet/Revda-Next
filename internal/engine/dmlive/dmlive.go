@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"revda/internal/browsercookies"
 	"revda/internal/config"
 	"revda/internal/engine/danmaku"
 	"revda/internal/engine/ffmpegctl"
@@ -107,10 +108,18 @@ func pageOf(rawURL string) int {
 
 // Runtime is one dmlive session: sockets, config state and the mpv handle.
 type Runtime struct {
-	opts    Options
-	site    Site
-	page    int
-	bcookie string
+	opts               Options
+	site               Site
+	page               int
+	bcookie            string
+	cookiesFromBrowser string
+
+	// The browser read happens once per session and its error is cached: the
+	// resolve loop retries, and re-reading SQLite/keyring each time would be
+	// slow and could return a different failure.
+	biliCookieOnce sync.Once
+	biliCookie     string
+	biliCookieErr  error
 
 	cfgMgr   *config.DmliveConfigManager
 	settings *danmaku.DMSettings
@@ -166,15 +175,16 @@ func Run(ctx context.Context, opts Options) error {
 	settings.Quiet.Store(opts.Quiet)
 
 	r := &Runtime{
-		opts:      opts,
-		site:      site,
-		page:      page,
-		bcookie:   cfg.BCookie,
-		cfgMgr:    cfgMgr,
-		settings:  settings,
-		live:      danmaku.NewLiveDanmaku(settings),
-		mpvDone:   make(chan struct{}),
-		recordDir: cfg.RecordPath,
+		opts:               opts,
+		site:               site,
+		page:               page,
+		bcookie:            cfg.BCookie,
+		cookiesFromBrowser: cfg.CookiesFromBrowser,
+		cfgMgr:             cfgMgr,
+		settings:           settings,
+		live:               danmaku.NewLiveDanmaku(settings),
+		mpvDone:            make(chan struct{}),
+		recordDir:          cfg.RecordPath,
 	}
 	if opts.RecordPath != "" {
 		r.recordDir = opts.RecordPath
@@ -246,13 +256,30 @@ func newRelaySockets() (danmakuLn, videoLn net.Listener, f2mURL string, err erro
 	return
 }
 
+// biliCookieValue returns the cookie for bilibili requests: the browser's
+// when cookies_from_browser is configured, else the manual bcookie.
+func (r *Runtime) biliCookieValue() (string, error) {
+	r.biliCookieOnce.Do(func() {
+		r.biliCookie, r.biliCookieErr = browsercookies.Resolve(r.bcookie, r.cookiesFromBrowser, ".bilibili.com")
+	})
+	return r.biliCookie, r.biliCookieErr
+}
+
 func (r *Runtime) resolveOnce(ctx context.Context) (*streamfinder.StreamInfo, error) {
 	var finder streamfinder.Finder
 	switch r.site {
 	case SiteBiliLive:
-		finder = streamfinder.NewBilibiliFinder(r.bcookie)
+		cookie, err := r.biliCookieValue()
+		if err != nil {
+			return nil, err
+		}
+		finder = streamfinder.NewBilibiliFinder(cookie)
 	case SiteBiliVideo:
-		finder = streamfinder.NewBiliVideoFinder(r.bcookie)
+		cookie, err := r.biliCookieValue()
+		if err != nil {
+			return nil, err
+		}
+		finder = streamfinder.NewBiliVideoFinder(cookie)
 	case SiteBahaVideo:
 		finder = streamfinder.NewBahaFinder()
 	case SiteDouyinLive:

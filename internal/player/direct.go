@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"revda/internal/browsercookies"
 	"revda/internal/config"
 	"revda/internal/engine/danmaku"
 	"revda/internal/engine/streamfinder"
@@ -56,9 +57,21 @@ func launchDirect(roomCode string, cfg config.DmliveConfig, record bool, extraAr
 	var dmRoomID string
 	var recordPath string
 
+	// Bilibili is the only platform that accepts a user cookie. When
+	// cookies_from_browser is set it replaces bcookie, as in Rust dmlive.
+	biliCookie := cfg.BCookie
+	if isBilibiliCode(roomCode) {
+		cookie, err := browsercookies.Resolve(cfg.BCookie, cfg.CookiesFromBrowser, ".bilibili.com")
+		if err != nil {
+			cancel()
+			return "", "", "", wrapPlayError(fmt.Errorf("读取浏览器 Cookie: %w", err), platformOf(roomCode), roomCode)
+		}
+		biliCookie = cookie
+	}
+
 	switch {
 	case strings.HasPrefix(roomCode, "bi-"):
-		finder = streamfinder.NewBilibiliFinder(cfg.BCookie)
+		finder = streamfinder.NewBilibiliFinder(biliCookie)
 		targetURL = "https://live.bilibili.com/" + strings.TrimPrefix(roomCode, "bi-")
 		dmRoomID = strings.TrimPrefix(roomCode, "bi-")
 	case strings.HasPrefix(roomCode, "do-"):
@@ -87,7 +100,7 @@ func launchDirect(roomCode string, cfg config.DmliveConfig, record bool, extraAr
 	case strings.HasPrefix(roomCode, "BV"), strings.HasPrefix(roomCode, "av"):
 		// Regular bilibili videos: DASH via WBI-signed playurl, danmaku from
 		// the static per-video XML (cid comes back in StreamInfo.DanmakuID).
-		finder = streamfinder.NewBiliVideoFinder(cfg.BCookie)
+		finder = streamfinder.NewBiliVideoFinder(biliCookie)
 		targetURL = "https://www.bilibili.com/video/" + roomCode
 		if i := strings.Index(roomCode, ":"); i >= 0 { // "BVxxx:2" multi-page form
 			targetURL = fmt.Sprintf("https://www.bilibili.com/video/%s?p=%s", roomCode[:i], roomCode[i+1:])
@@ -96,7 +109,7 @@ func launchDirect(roomCode string, cfg config.DmliveConfig, record bool, extraAr
 		// Bangumi: the season's episode list resolves to a bvid/cid pair,
 		// which then follows the ordinary video playurl path. "ep123" is the
 		// episode itself; "ss123:3" is season ss123, episode 3.
-		finder = streamfinder.NewBiliVideoFinder(cfg.BCookie)
+		finder = streamfinder.NewBiliVideoFinder(biliCookie)
 		seg := roomCode
 		if i := strings.Index(roomCode, ":"); i >= 0 {
 			seg = roomCode[:i]
@@ -531,6 +544,16 @@ func composePlayURL(info *streamfinder.StreamInfo) string {
 	}
 	return fmt.Sprintf("edl://!no_clip;!no_chapters;%%%d%%%s;!new_stream;!no_clip;!no_chapters;%%%d%%%s",
 		len(info.AudioURL), info.AudioURL, len(info.URL), info.URL)
+}
+
+// isBilibiliCode reports the room codes whose resolution takes a B station
+// cookie (live, video pages and bangumi).
+func isBilibiliCode(code string) bool {
+	return strings.HasPrefix(code, "bi-") ||
+		strings.HasPrefix(code, "BV") ||
+		strings.HasPrefix(code, "av") ||
+		strings.HasPrefix(code, "ep") ||
+		strings.HasPrefix(code, "ss")
 }
 
 // CanResolveDirectly checks if Go engine can resolve this room

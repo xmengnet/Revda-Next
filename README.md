@@ -9,8 +9,9 @@ Linux 平台下的弹幕直播与视频播放工具（基于 Go + MyGo 的全新
 * **纯 Go 原生实现**：直播流地址解析、实时弹幕 WebSocket/Tars 协议解析、ASS 弹幕实时渲染均由 Go 原生驱动。
 * **极速轻量**：告别浏览器内核/WebKitGTK 依赖，秒级冷启动，内存占用大幅降低。
 * **优秀播放体验**：得益于 mpv 的极致播放性能，享受稳定高帧率弹幕与无撕裂渲染。
-* **音画与弹幕录制**：支持直播一键录制，自动将实时弹幕封装为内嵌字幕轨（MKV/MP4），无需后期二次压制。
+* **音画与弹幕录制**：支持直播一键录制，自动将实时弹幕封装为内嵌字幕轨（MKV），无需后期二次压制。
 * **全平台多站点覆盖**：完整支持 Bilibili 直播、普通视频与番剧（自动连播与选集），以及斗鱼、虎牙、抖音、YouTube、Twitch 等平台。
+* **B 站高画质**：可手动填写 Cookie，或从 Chrome / Chromium / Firefox 自动读取 B 站登录 Cookie，解锁 1080P60 / 4K。
 * **无缝兼容**：配置与收藏兼容原有配置规则（`~/.config/dmlive/config.toml`）。
 
 ## Support Status
@@ -21,8 +22,10 @@ Linux 平台下的弹幕直播与视频播放工具（基于 Go + MyGo 的全新
 | Douyu | ✓ | ✓ | |  |
 | Huya | ✓ | ✓ | | |
 | Douyin | ✓ | ✓ | | |
-| YouTube | ✓ | ✓ | | |
+| YouTube | ✓ | ✗ | | |
 | Twitch | ✓ | ✓ | | |
+
+> YouTube 直播可正常播放（含音频），但直播弹幕暂不可用：YouTube 已变更聊天接口协议，当前的轮询实现拿不到消息。
 
 ## Screenshot
 
@@ -31,6 +34,8 @@ Linux 平台下的弹幕直播与视频播放工具（基于 Go + MyGo 的全新
 | ![深色主题](pictures/revda-main-dark.png) | ![浅色主题](pictures/revda-main-light.png) |
 
 ![播放与弹幕设置](pictures/revda-settings-dark.png)
+
+![使用帮助](pictures/revda-help-dark.png)
 
 > 截图由 MyGo 的离屏渲染测试生成（`REVDA_SCREENSHOTS=1 go test -run TestGenerateScreenshots ./internal/app`），房间与封面均为虚构数据。
 

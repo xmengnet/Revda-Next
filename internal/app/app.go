@@ -46,6 +46,7 @@ type App struct {
 
 	// Settings modal
 	showSettings              bool
+	showHelp                  bool
 	currentTheme              string // "system", "dark", "light"
 	settingFontScale          float64
 	settingFontOpacity        float64
@@ -593,6 +594,10 @@ func (a *App) View(c *ui.Context) {
 	if c.Shortcut(ui.Alt, ui.KeyQ) {
 		mygo.App.Quit()
 	}
+	if c.Shortcut(0, ui.KeyF1) {
+		a.showHelp = true
+		a.showSettings = false
+	}
 
 	a.mu.RLock()
 	saved := a.savedRooms
@@ -607,7 +612,7 @@ func (a *App) View(c *ui.Context) {
 
 			// Search / Input box
 			inputEl := ui.TextInput(c.Key("input_box"), &a.inputRoom).
-				Placeholder("输入房间号或直播/视频链接，回车播放").
+				Placeholder("输入房间代码（如 bi-6 / do-9999）或直播/视频链接，回车播放").
 				Grow(1)
 
 			if inputEl.Submitted() {
@@ -633,8 +638,14 @@ func (a *App) View(c *ui.Context) {
 				a.Refresh()
 			}
 
+			if ui.Button(c.Key("btn_help"), "帮助").Clicked() {
+				a.showHelp = true
+				a.showSettings = false
+			}
+
 			if ui.Button(c.Key("btn_settings"), "设置").Clicked() {
 				a.showSettings = true
+				a.showHelp = false
 			}
 		})
 
@@ -783,7 +794,7 @@ func (a *App) View(c *ui.Context) {
 
 				// 浏览器 Cookie 导入
 				ui.Column(c).FillWidth().Gap(6).Children(func() {
-					ui.Text(c, "从浏览器自动获取 Cookie (可选: chrome / chromium / firefox):").FontSize(12).TextColor(t.TextMuted)
+					ui.Text(c, "从浏览器自动获取 Cookie (chrome / chromium / firefox，仅用于 B 站):").FontSize(12).TextColor(t.TextMuted)
 					ui.TextInput(c.Key("input_browser_cookie"), &a.settingCookiesFromBrowser).
 						Placeholder("chrome / firefox / chromium (留空则不读取)").
 						FillWidth()
@@ -815,6 +826,10 @@ func (a *App) View(c *ui.Context) {
 				})
 			})
 		})
+	}
+
+	if a.showHelp {
+		a.renderHelp(c)
 	}
 
 	// 6. Status toast: floats over the window's top-right corner, taking no

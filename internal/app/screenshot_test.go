@@ -152,9 +152,13 @@ func TestGenerateScreenshots(t *testing.T) {
 
 	writeShot(t, a, outDir, "revda-main-dark.png", true, false)
 	writeShot(t, a, outDir, "revda-main-light.png", false, false)
-	// Settings: the modal is what the "设置" button opens.
+	// Settings and help are the two modals the top bar opens.
 	a.showSettings = true
 	writeShot(t, a, outDir, "revda-settings-dark.png", true, true)
+	a.showSettings = false
+	a.showHelp = true
+	writeShot(t, a, outDir, "revda-help-dark.png", true, true)
+	a.showHelp = false
 }
 
 func coversURL(base string, seed int) string {
