@@ -133,9 +133,20 @@ func buildContinuation(vid, cid string) string {
 func (c *YoutubeDanmakuClient) getRoomInfo(ctx context.Context, client *http.Client) (vid, cid string, err error) {
 	roomURL := c.roomURL
 	if strings.Contains(roomURL, "youtube.com/@") {
-		segs := strings.Split(strings.TrimRight(roomURL, "/"), "/")
-		handle := strings.TrimPrefix(segs[len(segs)-1], "@")
-		roomURL = "https://www.youtube.com/@" + handle + "/live"
+		// The URL is either .../@handle or .../@handle/live; take the @segment
+		// rather than the last path element.
+		if u, perr := url.Parse(roomURL); perr == nil {
+			handle := ""
+			for _, seg := range strings.Split(strings.Trim(u.Path, "/"), "/") {
+				if strings.HasPrefix(seg, "@") {
+					handle = strings.TrimPrefix(seg, "@")
+					break
+				}
+			}
+			if handle != "" {
+				roomURL = "https://www.youtube.com/@" + handle + "/live"
+			}
+		}
 	} else if u, perr := url.Parse(roomURL); perr == nil {
 		if v := u.Query().Get("v"); v != "" {
 			roomURL = "https://www.youtube.com/watch?v=" + v
@@ -149,6 +160,7 @@ func (c *YoutubeDanmakuClient) getRoomInfo(ctx context.Context, client *http.Cli
 	req.Header.Set("Connection", "keep-alive")
 	req.Header.Set("Accept-Language", "en-US")
 	req.Header.Set("Referer", "https://www.youtube.com/")
+	req.Header.Set("User-Agent", ytUA)
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", "", err
@@ -164,9 +176,8 @@ func (c *YoutubeDanmakuClient) getRoomInfo(ctx context.Context, client *http.Cli
 		}
 	}
 
-	re := regexp.MustCompile(`ytInitialPlayerResponse\s*=\s*(\{.+?\});.*?</script>`)
-	m := re.FindSubmatch(buf)
-	if m == nil {
+	raw, ok := extractJSONObject(string(buf), ytInitialPlayerResponseRe)
+	if !ok {
 		return "", "", fmt.Errorf("youtube chat: player response not found")
 	}
 	var pr struct {
@@ -175,13 +186,58 @@ func (c *YoutubeDanmakuClient) getRoomInfo(ctx context.Context, client *http.Cli
 			ChannelId string `json:"channelId"`
 		} `json:"videoDetails"`
 	}
-	if err := json.Unmarshal(m[1], &pr); err != nil {
+	if err := json.Unmarshal([]byte(raw), &pr); err != nil {
 		return "", "", err
 	}
 	if pr.VideoDetails.VideoId == "" || pr.VideoDetails.ChannelId == "" {
 		return "", "", fmt.Errorf("youtube chat: video/channel id missing")
 	}
 	return pr.VideoDetails.VideoId, pr.VideoDetails.ChannelId, nil
+}
+
+var ytInitialPlayerResponseRe = regexp.MustCompile(`ytInitialPlayerResponse\s*=\s*`)
+
+// extractJSONObject returns the balanced JSON object that follows marker. The
+// page embeds it in an inline <script> without a stable terminator, so brace
+// counting (string- and escape-aware) beats a regex here.
+func extractJSONObject(s string, marker *regexp.Regexp) (string, bool) {
+	loc := marker.FindStringIndex(s)
+	if loc == nil {
+		return "", false
+	}
+	start := strings.IndexByte(s[loc[1]:], '{')
+	if start < 0 {
+		return "", false
+	}
+	start += loc[1]
+
+	depth, inStr, esc := 0, false, false
+	for i := start; i < len(s); i++ {
+		c := s[i]
+		if inStr {
+			switch {
+			case esc:
+				esc = false
+			case c == '\\':
+				esc = true
+			case c == '"':
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return s[start : i+1], true
+			}
+		}
+	}
+	return "", false
 }
 
 var ytUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:146.0) Gecko/20100101 Firefox/146.0"

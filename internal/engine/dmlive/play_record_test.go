@@ -13,11 +13,16 @@ import (
 
 // Live end-to-end for the play&record path (relay -> tee -> mpv + recorder
 // ffmpeg), guarded by REVDA_RECORD_TEST=1: needs network, mpv, ffmpeg and a
-// live douyu room. mpv runs headless via MpvExtraArgs. Asserts the recording
-// decodes cleanly, carries a full-rate video track and real danmaku.
+// live, chatty douyu room (override with REVDA_RECORD_URL). mpv runs headless
+// via MpvExtraArgs. Asserts the recording decodes cleanly, carries a
+// full-rate video track and real danmaku.
 func TestPlayRecordLiveDouyu(t *testing.T) {
 	if os.Getenv("REVDA_RECORD_TEST") == "" {
 		t.Skip("set REVDA_RECORD_TEST=1 to run the live play&record e2e")
+	}
+	url := os.Getenv("REVDA_RECORD_URL")
+	if url == "" {
+		url = "https://www.douyu.com/1126960"
 	}
 	dir := t.TempDir()
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -26,7 +31,7 @@ func TestPlayRecordLiveDouyu(t *testing.T) {
 	started := make(chan struct{})
 	go func() {
 		_ = Run(ctx, Options{
-			URL:                "https://www.douyu.com/9999",
+			URL:                url,
 			RecordWhilePlaying: true,
 			Quiet:              true,
 			LogLevel:           2,

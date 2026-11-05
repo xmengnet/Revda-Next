@@ -168,12 +168,23 @@ func validateGoogleVideoURL(ctx context.Context, client *http.Client, u string) 
 }
 
 type ytDlpFormat struct {
-	URL    string  `json:"url"`
-	VCodec string  `json:"vcodec"`
-	ACodec string  `json:"acodec"`
-	TBR    float64 `json:"tbr"`
-	ABR    float64 `json:"abr"`
-	Height int     `json:"height"`
+	URL        string  `json:"url"`
+	VCodec     string  `json:"vcodec"`
+	ACodec     string  `json:"acodec"`
+	Resolution string  `json:"resolution"`
+	TBR        float64 `json:"tbr"`
+	ABR        float64 `json:"abr"`
+	Height     int     `json:"height"`
+}
+
+func (f ytDlpFormat) hasVideo() bool { return f.VCodec != "" && f.VCodec != "none" }
+func (f ytDlpFormat) hasAudio() bool { return f.ACodec != "" && f.ACodec != "none" }
+
+// audioOnly also catches YouTube's HLS live audio variants (ids 233/234):
+// yt-dlp reports them with vcodec/acodec null and resolution "audio only",
+// so codec fields alone would classify them as unusable.
+func (f ytDlpFormat) audioOnly() bool {
+	return !f.hasVideo() && (f.hasAudio() || f.Resolution == "audio only")
 }
 
 type ytDlpDump struct {
@@ -200,44 +211,58 @@ func (y *YoutubeFinder) resolveYtDlp(ctx context.Context, roomURL string) (*Stre
 		return nil, fmt.Errorf("yt-dlp json: %w", err)
 	}
 
-	// Prefer a combined A/V stream (single URL, no EDL needed).
-	var bestCombined, bestVideo, bestAudio ytDlpFormat
-	for _, it := range dump.Formats {
-		if it.URL == "" {
-			continue
-		}
-		hasV := it.VCodec != "" && it.VCodec != "none"
-		hasA := it.ACodec != "" && it.ACodec != "none"
-		if hasV && hasA && it.TBR > bestCombined.TBR {
-			bestCombined = it
-		}
-		if hasV && !hasA && it.TBR > bestVideo.TBR {
-			bestVideo = it
-		}
-		if hasA && !hasV && it.ABR+it.TBR > bestAudio.ABR+bestAudio.TBR {
-			bestAudio = it
-		}
-	}
-
-	ret := &StreamInfo{Headers: map[string]string{
-		"User-Agent": youtubeUA,
-		"Referer":    youtubeReferer,
-	}}
-	switch {
-	case bestCombined.URL != "":
-		ret.URL = bestCombined.URL
-	case bestVideo.URL != "" && bestAudio.URL != "":
-		ret.URL, ret.AudioURL = bestVideo.URL, bestAudio.URL
-	case bestVideo.URL != "":
-		ret.URL = bestVideo.URL
-	default:
+	videoURL, audioURL := selectYtDlpStreams(dump.Formats)
+	if videoURL == "" {
 		if dump.IsLive {
 			return nil, errors.New("yt-dlp returned no downloadable formats for the live stream")
 		}
 		return nil, errors.New("yt-dlp returned no usable formats")
 	}
-	ret.Title = fmt.Sprintf("%s - %s", dump.Title, dump.Uploader)
-	return ret, nil
+	return &StreamInfo{
+		Title:    fmt.Sprintf("%s - %s", dump.Title, dump.Uploader),
+		URL:      videoURL,
+		AudioURL: audioURL,
+		Headers: map[string]string{
+			"User-Agent": youtubeUA,
+			"Referer":    youtubeReferer,
+		},
+	}, nil
+}
+
+// selectYtDlpStreams prefers one combined A/V URL, then a separate video URL
+// plus the best audio URL. It returns only the video URL when no audio track
+// is available.
+func selectYtDlpStreams(formats []ytDlpFormat) (videoURL, audioURL string) {
+	var bestCombined, bestVideo, bestAudio ytDlpFormat
+	// Start below zero so the first candidate is kept even when yt-dlp reports
+	// null bitrates (HLS audio variants do), and later equal scores win.
+	combinedScore, videoScore, audioScore := -1.0, -1.0, -1.0
+	for _, it := range formats {
+		if it.URL == "" {
+			continue
+		}
+		switch {
+		case it.audioOnly():
+			if s := it.ABR + it.TBR; s >= audioScore {
+				bestAudio, audioScore = it, s
+			}
+		case it.hasVideo() && it.hasAudio():
+			if s := it.TBR; s >= combinedScore {
+				bestCombined, combinedScore = it, s
+			}
+		case it.hasVideo():
+			if s := it.TBR; s >= videoScore {
+				bestVideo, videoScore = it, s
+			}
+		}
+	}
+	switch {
+	case bestCombined.URL != "":
+		return bestCombined.URL, ""
+	case bestVideo.URL != "":
+		return bestVideo.URL, bestAudio.URL
+	}
+	return "", ""
 }
 
 // pickYTFormat picks the highest-bitrate format with the wanted mime prefix,

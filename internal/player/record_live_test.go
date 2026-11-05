@@ -2,7 +2,7 @@ package player
 
 import (
 	"context"
-
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -13,13 +13,18 @@ import (
 
 // TestRecordHasDanmakuE2E records a short live segment and requires the
 // finished file to carry an ASS subtitle track. This is the regression test
-// for "recording has no danmaku".
+// for "recording has no danmaku". Override the room (which must have chat
+// traffic) with REVDA_RECORD_ROOM.
 func TestRecordHasDanmakuE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("network test")
 	}
-	cfg := config.DmliveConfig{DanmakuSpeed: 8000, FontAlpha: 0, FontScale: 1.0}
-	ipcSock, _, outPath, err := launchDirect("do-9999", cfg, true, []string{"--vo=null", "--ao=null"})
+	roomCode := os.Getenv("REVDA_RECORD_ROOM")
+	if roomCode == "" {
+		roomCode = "do-1126960"
+	}
+	cfg := config.DmliveConfig{DanmakuSpeed: 8000, FontAlpha: 0, FontScale: 1.0, RecordPath: t.TempDir()}
+	ipcSock, _, outPath, err := launchDirect(roomCode, cfg, true, []string{"--vo=null", "--ao=null"})
 	if err != nil {
 		t.Fatalf("launch: %v", err)
 	}

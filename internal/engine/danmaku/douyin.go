@@ -435,10 +435,16 @@ func pbParse(data []byte) ([]pbField, error) {
 			f.val, data = data[:8], data[8:]
 		case 2:
 			l, n := binary.Uvarint(data)
-			if n <= 0 || l > uint64(len(data)) {
+			if n <= 0 {
 				return nil, errors.New("protobuf: bad length")
 			}
 			data = data[n:]
+			// The length must fit AFTER the prefix bytes are consumed, not
+			// before: validating against the pre-prefix slice let a truncated
+			// frame panic the whole process.
+			if l > uint64(len(data)) {
+				return nil, errors.New("protobuf: bad length")
+			}
 			f.val, data = data[:l], data[l:]
 		case 5:
 			if len(data) < 4 {

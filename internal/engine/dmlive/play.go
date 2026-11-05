@@ -302,6 +302,11 @@ func (r *Runtime) relayOptions(info *streamfinder.StreamInfo, st ffmpegctl.Strea
 		if info.AudioURL != "" {
 			opts.DashInputs = append(opts.DashInputs, dashInput(info, info.AudioURL))
 		}
+		// HLS audio is ADTS (no AudioSpecificConfig); copying it into the
+		// non-seekable matroska output fails before the first packet. DASH
+		// (m4s/mp4) already carries the config and keeps stream-copy.
+		opts.TranscodeAudio = strings.Contains(info.URL, ".m3u8") ||
+			strings.Contains(info.AudioURL, ".m3u8")
 	}
 	return opts
 }
@@ -490,7 +495,10 @@ func (r *Runtime) downloadDanmaku(ctx context.Context) error {
 // detectStreamType maps the resolved URL to the relay input shape (Rust
 // ConfigManager::set_stream_type).
 func detectStreamType(site Site, rawURL string) ffmpegctl.StreamType {
-	if site == SiteBiliVideo {
+	// Both are two-input sources: ffmpeg must see video and audio separately.
+	// YouTube live HLS ships video-only variants plus a separate audio
+	// playlist, so the Go HLS downloader (which drops AudioURL) is wrong here.
+	if site == SiteBiliVideo || site == SiteYoutubeLive {
 		return ffmpegctl.TDASH
 	}
 	if strings.Contains(rawURL, ".m3u8") {

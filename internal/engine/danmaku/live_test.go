@@ -7,93 +7,69 @@ import (
 	"time"
 )
 
-// Integration tests against live servers. Room 6 (bilibili official radio)
-// and 9999 (douyu) have constant chat traffic; requiring at least one message
-// in 60s makes a broken auth/TLS chain fail instead of silently passing.
-// Override rooms via BILI_ROOM / DOUYU_ROOM env vars.
+// liveDanmakuClient is the shared surface of the per-site live clients.
+type liveDanmakuClient interface {
+	Messages() <-chan *DanmakuMessage
+	Start(context.Context) error
+}
+
+// runLiveDanmaku waits for one message from the first responsive room. An
+// env override (when set) is the only candidate; otherwise def is tried
+// followed by more. A broken auth/TLS chain fails because no candidate
+// responds, while one quiet room no longer produces a false failure.
+func runLiveDanmaku(t *testing.T, env, def string, more []string, newClient func(string) liveDanmakuClient) {
+	t.Helper()
+	rooms := []string{def}
+	if v := os.Getenv(env); v != "" {
+		rooms = []string{v}
+	} else {
+		rooms = append(rooms, more...)
+	}
+
+	const window = 20 * time.Second
+	for _, room := range rooms {
+		ctx, cancel := context.WithTimeout(context.Background(), window)
+		client := newClient(room)
+		go func() { _ = client.Start(ctx) }()
+		select {
+		case msg := <-client.Messages():
+			cancel()
+			t.Logf("room %s: [%s] %s (color %s)", room, msg.Nick, msg.Text, msg.Color)
+			return
+		case <-time.After(window):
+			t.Logf("room %s: no danmaku in %s", room, window)
+		}
+		cancel()
+	}
+	t.Fatalf("no danmaku from candidate rooms %v (auth/TLS chain broken, or all rooms quiet)", rooms)
+}
+
+// Room 545068 (bilibili esports) and 7734200 carry steady chat; 6 (official
+// radio) is only busy around events.
 func TestBilibiliDanmakuLive(t *testing.T) {
 	if testing.Short() {
 		t.Skip("network test")
 	}
-	room := os.Getenv("BILI_ROOM")
-	if room == "" {
-		room = "6"
-	}
-	client := NewBilibiliDanmakuClient(room)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	go func() { _ = client.Start(ctx) }()
-
-	deadline := time.After(55 * time.Second)
-	for {
-		select {
-		case msg := <-client.Messages():
-			t.Logf("received: [%s] %s", msg.Nick, msg.Text)
-			return
-		case <-ctx.Done():
-			t.Fatal("no danmaku within 60s (auth chain broken)")
-		case <-deadline:
-			t.Fatal("no danmaku within 55s")
-		}
-	}
+	runLiveDanmaku(t, "BILI_ROOM", "545068", []string{"7734200", "6"},
+		func(room string) liveDanmakuClient { return NewBilibiliDanmakuClient(room) })
 }
 
 func TestDouyuDanmakuLive(t *testing.T) {
 	if testing.Short() {
 		t.Skip("network test")
 	}
-	room := os.Getenv("DOUYU_ROOM")
-	if room == "" {
-		room = "9999"
-	}
-	client := NewDouyuDanmakuClient(room)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	go func() { _ = client.Start(ctx) }()
-
-	deadline := time.After(55 * time.Second)
-	for {
-		select {
-		case msg := <-client.Messages():
-			t.Logf("received: [%s] %s (color %s)", msg.Nick, msg.Text, msg.Color)
-			return
-		case <-ctx.Done():
-			t.Fatal("no danmaku within 60s (TLS chain broken)")
-		case <-deadline:
-			t.Fatal("no danmaku within 55s")
-		}
-	}
+	runLiveDanmaku(t, "DOUYU_ROOM", "1126960", []string{"12306", "9999"},
+		func(room string) liveDanmakuClient { return NewDouyuDanmakuClient(room) })
 }
 
-// Room 1995 is a high-traffic huya room; the register chain needs the mobile
-// page ids (lYyid, lChannelId, lSubChannelId) plus a tars websocket register,
-// so a broken codec or id extraction fails here. Override via HUYA_ROOM.
+// The huya register chain needs the mobile page ids (lYyid, lChannelId,
+// lSubChannelId) plus a tars websocket register, so a broken codec or id
+// extraction fails here. The previous default, 1995, no longer serves those
+// ids at all; these rooms are the current top-heat ones.
 func TestHuyaDanmakuLive(t *testing.T) {
 	if testing.Short() {
 		t.Skip("network test")
 	}
-	room := os.Getenv("HUYA_ROOM")
-	if room == "" {
-		room = "1995"
-	}
-	client := NewHuyaDanmakuClient(room)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	go func() { _ = client.Start(ctx) }()
-
-	deadline := time.After(55 * time.Second)
-	for {
-		select {
-		case msg := <-client.Messages():
-			t.Logf("received: [%s] %s (color %s)", msg.Nick, msg.Text, msg.Color)
-			return
-		case <-ctx.Done():
-			t.Fatal("no danmaku within 60s (register/decode chain broken)")
-		case <-deadline:
-			t.Fatal("no danmaku within 55s")
-		}
-	}
+	runLiveDanmaku(t, "HUYA_ROOM", "998", []string{"189201", "528300"},
+		func(room string) liveDanmakuClient { return NewHuyaDanmakuClient(room) })
 }

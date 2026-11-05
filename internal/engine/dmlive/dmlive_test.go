@@ -102,6 +102,11 @@ func TestDetectStreamType(t *testing.T) {
 	if got := detectStreamType(SiteHuyaLive, "https://x/y.flv"); got != ffmpegctl.TFLV {
 		t.Fatalf("flv must be TFLV, got %v", got)
 	}
+	// YouTube live is m3u8 but split into video and audio playlists, so it
+	// must not take the single-input HLS path.
+	if got := detectStreamType(SiteYoutubeLive, "https://x/y.m3u8"); got != ffmpegctl.TDASH {
+		t.Fatalf("youtube m3u8 must be DASH (dual input), got %v", got)
+	}
 }
 
 func TestLastPathSeg(t *testing.T) {

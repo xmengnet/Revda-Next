@@ -55,6 +55,13 @@ type Options struct {
 	VideoURL   string // tcp://... source for FLV/HLS1, pre-ff source for HLS0
 	DanmakuURL string // tcp://... danmaku subtitle stream
 	Output     string // listen target: tcp://f2m or the --http-address value
+
+	// TranscodeAudio re-encodes audio instead of stream-copying it. HLS
+	// (ADTS) audio carries no AudioSpecificConfig until a packet is parsed,
+	// but a non-seekable output needs the matroska header up front, so a
+	// copy fails with "Error parsing AAC extradata". The encoder supplies
+	// that extradata immediately.
+	TranscodeAudio bool
 }
 
 // FF is one running ffmpeg relay instance.
@@ -141,8 +148,16 @@ func Run(ctx context.Context, opts Options) (*FF, error) {
 		args = append(args, "-i", opts.DanmakuURL)
 		args = append(args, "-map", "0:v:0?", "-map", "0:a:0?", "-map", "1:s:0", "-map", "1:s:1?")
 	}
+	audioArgs := []string{"-c:a", "copy"}
+	if opts.TranscodeAudio {
+		audioArgs = []string{"-c:a", "aac", "-b:a", "160k"}
+	}
 	args = append(args,
-		"-c:v", "copy", "-c:a", "copy", "-c:s", "copy",
+		"-c:v", "copy",
+	)
+	args = append(args, audioArgs...)
+	args = append(args,
+		"-c:s", "copy",
 		"-metadata", "title="+opts.Title,
 		"-f", "matroska",
 		"-listen", "1", opts.Output,

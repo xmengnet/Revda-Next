@@ -1,40 +1,25 @@
 package danmaku
 
 import (
-	"context"
-	"os"
 	"testing"
-	"time"
 )
 
 // Live test against douyin: connects to the webcast im push wss endpoint and
-// requires at least one chat message. The default room is a small channel —
-// override with DOUYIN_ROOM (public web rid from live.douyin.com/{rid}) for a
-// busier room.
+// requires at least one chat message. Override with DOUYIN_ROOM (public web
+// rid from live.douyin.com/{rid}) when the defaults go offline.
 func TestDouyinDanmakuLive(t *testing.T) {
 	if testing.Short() {
 		t.Skip("network test")
 	}
-	room := os.Getenv("DOUYIN_ROOM")
-	if room == "" {
-		room = "271387799639"
-	}
-	client := NewDouyinDanmakuClient(room)
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
+	runLiveDanmaku(t, "DOUYIN_ROOM", "548507406983", []string{"85516215620", "775472915676"},
+		func(room string) liveDanmakuClient { return NewDouyinDanmakuClient(room) })
+}
 
-	go func() { _ = client.Start(ctx) }()
-
-	deadline := time.After(85 * time.Second)
-	for {
-		select {
-		case msg := <-client.Messages():
-			t.Logf("received: [%s] %s", msg.Nick, msg.Text)
-			return
-		case <-ctx.Done():
-			t.Fatal("no danmaku within 90s (signature/wss chain broken)")
-		case <-deadline:
-			t.Fatal("no danmaku within 85s")
-		}
+// A frame whose length prefix fits the pre-prefix slice but not the payload
+// used to panic instead of returning an error, taking the whole process down.
+func TestPbParseTruncatedLength(t *testing.T) {
+	data := []byte{0x0a, 0x02, 0xff} // tag, length 2, only one payload byte
+	if _, err := pbParse(data); err == nil {
+		t.Fatal("expected a truncation error")
 	}
 }
