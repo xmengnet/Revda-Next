@@ -49,33 +49,27 @@ Linux 平台下的弹幕直播与视频播放工具（基于 Go + MyGo 的全新
 
 ### Archlinux
 
-#### [ArchlinuxCN](https://wiki.archlinux.org/index.php/Unofficial_user_repositories#archlinuxcn) repo
-
-```
-sudo pacman -S revda-git
-```
-Thanks for [@MarvelousBlack](https://github.com/MarvelousBlack)'s maintenance.
-
 #### AUR
 ```
-paru -S revda-git # or any other aur helper
+paru -S revda-next # or any other AUR helper
 ```
+包地址：https://aur.archlinux.org/packages/revda-next
 
 
 ### From source
 
 #### 方式一：直接使用 Go 编译（推荐，极简无其他编译依赖）
 ```bash
-git clone https://github.com/THMonster/Revda.git
-cd Revda
-go build -trimpath -ldflags "-s -w" -o revda main.go
-./revda
+git clone https://github.com/xmengnet/Revda-Next.git
+cd Revda-Next
+go build -trimpath -ldflags "-s -w" -o revda-next main.go
+./revda-next
 ```
 
 #### 方式二：使用 CMake 安装到系统
 ```bash
-git clone https://github.com/THMonster/Revda.git --recursive
-cd Revda
+git clone https://github.com/xmengnet/Revda-Next.git
+cd Revda-Next
 mkdir build
 cd build
 cmake -DCMAKE_BUILD_TYPE=Release ..
@@ -86,4 +80,4 @@ sudo make install/fast
 ```
 
 ## Usage
-见[Github Wiki](https://github.com/THMonster/Revda/wiki)
+见软件内「帮助」按钮（快捷键 `F1`），或阅读本 README 的功能与支持列表。
