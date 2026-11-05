@@ -2,7 +2,7 @@
   "name": "Revda-Next",
   "slug": "revda-next",
   "identifier": "com.thmonster.revda-next",
-  "version": "5.9.0",
+  "version": "5.9.1",
   "publisher": "THMonster",
   "icon": "icon/revda-next.png",
   "main": ".",
