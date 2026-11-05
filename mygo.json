@@ -1,0 +1,17 @@
+{
+  "name": "Revda-Next",
+  "slug": "revda-next",
+  "identifier": "com.thmonster.revda-next",
+  "version": "5.9.0",
+  "publisher": "THMonster",
+  "icon": "icon/revda-next.png",
+  "main": ".",
+  "linux": {
+    "webview": false,
+    "comment": "Play streaming and video with danmaku",
+    "categories": ["AudioVideo", "Audio", "Video", "Player"],
+    "maintainer": "THMonster",
+    "depends": ["mpv", "ffmpeg"],
+    "command": "revda-next"
+  }
+}
